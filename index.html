@@ -3,77 +3,162 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Twikoo on Cloudflare Worker (Demo)</title>
+  <title>Comments</title>
   <style>
-    :root { color-scheme: light dark; }
-    body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
-    header { padding: 1rem 1.25rem; border-bottom: 1px solid #ddd; }
-    main { max-width: 880px; margin: 0 auto; padding: 1rem; }
-    .tip { font-size: 0.9rem; opacity: .8; margin-bottom: 1rem; }
-    .ok { color: #2e7d32; }
-    .err { color: #c62828; }
-    code { padding: .15rem .35rem; background: rgba(127,127,127,.12); border-radius: 6px; }
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Segoe UI,Helvetica,Arial,sans-serif;margin:0;padding:24px;background:#0e0f12;color:#eaeaea}
+    .wrap{max-width:860px;margin:0 auto}
+    .bar{display:flex;gap:8px;align-items:center;margin:12px 0 18px}
+    .bar button,.bar label{border:1px solid #2b2f3a;background:#1b1f2a;color:#eaeaea;padding:8px 12px;border-radius:10px;cursor:pointer}
+    .bar button:hover,.bar label:hover{background:#232838}
+    .bar small{opacity:.7}
+    .hidden{display:none}
+    .notice{font-size:.9em;opacity:.75}
+    a{color:#9bd}
   </style>
+  <!-- Twikoo (Cloudflare-ready) -->
+  <script src="https://cdn.jsdelivr.net/npm/twikoo@1.6.40/dist/twikoo.all.min.js"></script>
 </head>
 <body>
-  <header>
-    <strong>Twikoo Demo</strong>
-  </header>
+  <div class="wrap">
+    <h1>Chat / Comments</h1>
 
-  <main>
-    <p class="tip">
-      This page mounts Twikoo comments served by your Cloudflare Worker.
-      Make sure your Worker’s CORS allows this origin.
-    </p>
+    <!-- simple toolbar -->
+    <div class="bar">
+      <label for="imgInput">📷 Upload image</label>
+      <input id="imgInput" class="hidden" type="file" accept="image/*" />
+      <button id="pasteHelp" type="button">How to paste</button>
+      <small class="notice" id="status">Ready.</small>
+    </div>
 
-    <!-- Twikoo container -->
+    <!-- Twikoo mount point -->
     <div id="tcomment"></div>
 
-    <p id="status" class="tip"></p>
-  </main>
-
-  <!-- Twikoo (frontend) -->
-  <script src="https://cdn.jsdelivr.net/npm/twikoo@1.6.40/dist/twikoo.all.min.js"></script>
-
-  <!-- If you enabled Cloudflare Turnstile in Twikoo config, uncomment and set your sitekey
-  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
-  -->
+    <p class="notice">
+      Images upload via <a href="https://api.imgbb.com/" target="_blank" rel="noopener">imgbb</a>.
+    </p>
+  </div>
 
   <script>
-    // ==== EDIT THESE TWO LINES ====
-    const WORKER_URL = 'https://twikoo-cloudflare.ertertertet07.workers.dev'; // your Worker endpoint
-    const PAGE_URL   = location.pathname; // use a stable identifier per page (or set manually)
-    // ==============================
-
-    const statusEl = document.getElementById('status');
-
-    // Basic health check (optional)
-    fetch(WORKER_URL, { method: 'GET' })
-      .then(r => r.json())
-      .then(j => statusEl.innerHTML =
-        `<span class="ok">Worker online.</span> Version: <code>${j.version || 'unknown'}</code>`)
-      .catch(() => statusEl.innerHTML =
-        `<span class="err">Could not reach Worker. Check URL & CORS.</span>`);
+    // === YOUR SETTINGS (from your answers) ===
+    const WORKER_URL = 'https://twikoo-cloudflare.ertertertet07.workers.dev'; // “use def”
+    const GROUP_BY_PATH = true; // auto by location.pathname
+    const IMGBB_KEY = 'a067e2d782732e418117eb31cfa6fe8c';
+    // =========================================
 
     // Initialize Twikoo
     twikoo.init({
-      envId: WORKER_URL,          // Cloudflare Worker URL
-      el:    '#tcomment',
-      lang:  'en',
-      // The page identity (Twikoo uses url to group comments)
-      path:  PAGE_URL,
-      // If you configured an external image host in Twikoo DB config (e.g., imgbb / sm.ms),
-      // turn this on to allow uploads from the editor:
-      uploadImages: { enabled: true },
-      // If you enabled Turnstile in Twikoo DB config, you can pass the sitekey here:
-      // captcha: { provider: 'turnstile', siteKey: 'YOUR_TURNSTILE_SITE_KEY' }
+      el: '#tcomment',
+      envId: WORKER_URL,          // Cloudflare Worker endpoint
+      lang: 'en',
+      path: GROUP_BY_PATH ? location.pathname : 'global'
     });
 
-    // Helpful console hints
-    console.log('[Twikoo] Using Worker:', WORKER_URL);
-    console.log('[Twikoo] Page path:', PAGE_URL);
-    console.log('[Twikoo] Ensure your Worker DB config has UPLOAD_IMG_TYPE + key/token set if using uploads.');
-    console.log('[Twikoo] Ensure CORS_ALLOW_ORIGIN in Twikoo config includes this page origin:', location.origin);
+    // Helpers
+    const $status = document.getElementById('status');
+    function setStatus(msg){ $status.textContent = msg; }
+    function tkTextarea(){
+      // Twikoo renders a textarea with class "el-textarea__inner"
+      return document.querySelector('#tcomment textarea.el-textarea__inner');
+    }
+    function insertAtCursor(textarea, snippet){
+      if (!textarea) return;
+      const start = textarea.selectionStart ?? textarea.value.length;
+      const end   = textarea.selectionEnd ?? textarea.value.length;
+      const before = textarea.value.slice(0, start);
+      const after  = textarea.value.slice(end);
+      textarea.value = before + snippet + after;
+      const pos = start + snippet.length;
+      textarea.setSelectionRange(pos, pos);
+      textarea.focus();
+    }
+
+    // imgbb upload (client-side, base64)
+    async function uploadToImgbb(file){
+      setStatus('Uploading image…');
+      const b64 = await fileToBase64(file); // dataURL
+      const pure = b64.split(',')[1];       // strip "data:*/*;base64,"
+      const form = new FormData();
+      form.append('image', pure);
+      // Optional: name
+      form.append('name', (file.name || 'upload').replace(/\.[^.]+$/, ''));
+      const url = `https://api.imgbb.com/1/upload?key=${encodeURIComponent(IMGBB_KEY)}`;
+
+      const res = await fetch(url, { method: 'POST', body: form });
+      if (!res.ok) throw new Error(`imgbb HTTP ${res.status}`);
+      const json = await res.json();
+      if (!json || !json.data || !json.data.url) {
+        throw new Error('imgbb response missing URL');
+      }
+      setStatus('Upload done.');
+      return json.data.url;
+    }
+
+    function fileToBase64(file){
+      return new Promise((resolve, reject)=>{
+        const fr = new FileReader();
+        fr.onload = () => resolve(fr.result);
+        fr.onerror = () => reject(fr.error || new Error('read failed'));
+        fr.readAsDataURL(file);
+      });
+    }
+
+    function insertImageMarkdown(url){
+      const ta = tkTextarea();
+      const md = `![image](${url})`;
+      // Prefer to insert on its own line
+      insertAtCursor(ta, (ta && ta.value && !ta.value.endsWith('\n') ? '\n' : '') + md + '\n');
+      setStatus('Image inserted into comment box.');
+    }
+
+    // Click-to-upload
+    document.getElementById('imgInput').addEventListener('change', async (e)=>{
+      const file = e.target.files?.[0];
+      if (!file) return;
+      try{
+        const url = await uploadToImgbb(file);
+        insertImageMarkdown(url);
+      }catch(err){
+        console.error(err);
+        setStatus('Image Upload failed: ' + (err.message || 'unknown'));
+        alert('Image Upload failed: ' + (err.message || 'unknown'));
+      }finally{
+        e.target.value = ''; // reset input
+      }
+    });
+
+    // “How to paste” helper
+    document.getElementById('pasteHelp').addEventListener('click', ()=>{
+      alert('Tip: you can also paste an image directly into the comment box (Cmd/Ctrl+V) and it will upload automatically.');
+    });
+
+    // Paste-to-upload (paste image into the Twikoo textarea)
+    document.addEventListener('paste', async (evt)=>{
+      const ta = tkTextarea();
+      if (!ta || document.activeElement !== ta) return; // only when focused in comment box
+      const items = evt.clipboardData?.items;
+      if (!items) return;
+      for (const it of items) {
+        if (it.type && it.type.startsWith('image/')) {
+          const file = it.getAsFile();
+          if (!file) continue;
+          evt.preventDefault();
+          try{
+            const url = await uploadToImgbb(file);
+            insertImageMarkdown(url);
+          }catch(err){
+            console.error(err);
+            setStatus('Image Upload failed: ' + (err.message || 'unknown'));
+            alert('Image Upload failed: ' + (err.message || 'unknown'));
+          }
+          break; // handle one image per paste
+        }
+      }
+    });
+
+    // Since you’re embedding on Google Sites:
+    // Ensure your Worker allows this origin in Twikoo server config:
+    // CORS_ALLOW_ORIGIN = "https://sites.google.com"
+    // (you can refine to the exact Sites URL if needed)
   </script>
 </body>
 </html>
