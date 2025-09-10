@@ -1,11 +1,95 @@
-<!doctype html><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<div id="tcomment"></div>
-<script src="https://cdn.jsdelivr.net/npm/twikoo/dist/twikoo.all.min.js"></script>
-<script>
-  twikoo.init({
-    el: '#tcomment',
-    envId: 'https://twikoo-cloudflare.ertertertet07.workers.dev',
-    path: '/global-chat'
-  })
-</script>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Comments</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+    .wrap { max-width: 860px; margin: 32px auto; padding: 0 16px; }
+    .bar { display:flex; gap:12px; align-items:center; margin-bottom:12px; }
+    .bar input[type="file"]{ font-size:14px; }
+    .bar button{ padding:8px 12px; font-size:14px; cursor:pointer; }
+    .note { font-size:12px; opacity:.75; }
+    /* Hide Twikoo's built-in image button if desired */
+    /* .tk-action-image{ display:none } */
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Discussion</h1>
+
+    <!-- Optional: simple client-side uploader that uses your Worker’s /upload route -->
+    <div class="bar">
+      <input id="u" type="file" accept="image/*" />
+      <button id="upBtn" type="button">Upload image</button>
+      <span class="note">Uploads go to your Worker’s <code>/upload</code> and return a public URL.</span>
+    </div>
+
+    <div id="tcomment"></div>
+  </div>
+
+  <!-- Twikoo client -->
+  <script src="https://cdn.jsdelivr.net/npm/twikoo@1.6.40/dist/twikoo.min.js"></script>
+  <script>
+    // REQUIRED: set to your deployed Worker endpoint
+    const TWIKOO_ENDPOINT = 'https://twikoo-cloudflare.ertertertet07.workers.dev';
+
+    // Initialize Twikoo
+    twikoo.init({
+      el: '#tcomment',
+      envId: TWIKOO_ENDPOINT,
+      region: 'cfworker',
+      path: location.pathname // stable per-page key on GitHub Pages
+    });
+
+    // Optional image uploader -> inserts Markdown into Twikoo textarea
+    async function uploadViaWorker(file) {
+      const fd = new FormData();
+      fd.append('file', file, file.name || 'image');
+      const r = await fetch(TWIKOO_ENDPOINT + '/upload', { method: 'POST', body: fd });
+      if (!r.ok) throw new Error('Upload failed: ' + r.status);
+      const data = await r.json();
+      if (!data.url) throw new Error('No URL returned');
+      return data.url;
+    }
+
+    function insertAtCursor(textarea, text) {
+      const start = textarea.selectionStart ?? textarea.value.length;
+      const end = textarea.selectionEnd ?? textarea.value.length;
+      const before = textarea.value.slice(0, start);
+      const after = textarea.value.slice(end);
+      textarea.value = before + text + after;
+      const pos = start + text.length;
+      textarea.setSelectionRange(pos, pos);
+      textarea.focus();
+    }
+
+    async function handleUpload() {
+      const inp = document.getElementById('u');
+      const btn = document.getElementById('upBtn');
+      const file = inp.files && inp.files[0];
+      if (!file) { alert('Choose an image first.'); return; }
+      btn.disabled = true;
+      btn.textContent = 'Uploading...';
+      try {
+        const url = await uploadViaWorker(file);
+        // Find Twikoo textarea
+        const ta = document.querySelector('.tk-textarea');
+        const markdown = `\n![image](${url})\n`;
+        if (ta) insertAtCursor(ta, markdown);
+        else prompt('Copy the image URL:', url);
+      } catch (e) {
+        alert(e.message || String(e));
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Upload image';
+        inp.value = '';
+      }
+    }
+
+    document.getElementById('upBtn').addEventListener('click', handleUpload);
+  </script>
+</body>
+</html>
