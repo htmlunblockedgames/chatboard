@@ -1,56 +1,41 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
+  <meta charset="UTF-8">
   <title>Chatboard</title>
-  <script src="https://cdn.jsdelivr.net/npm/twikoo@1/dist/twikoo.all.min.js"></script>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
-    body { font-family: Arial, sans-serif; background:#f8f8f8; padding:20px; }
-    #tcomment { max-width: 800px; margin:auto; background:#fff; padding:20px; border-radius:8px; }
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      padding: 20px;
+      background: #f5f5f5;
+    }
+    h1 {
+      text-align: center;
+    }
+    #tcomment {
+      max-width: 800px;
+      margin: 20px auto;
+      background: #fff;
+      padding: 15px;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
   </style>
 </head>
 <body>
   <h1>Chatboard</h1>
   <div id="tcomment"></div>
 
+  <!-- Twikoo -->
+  <script src="https://cdn.jsdelivr.net/npm/twikoo/dist/twikoo.all.min.js"></script>
   <script>
-    // Replace this with your deployed Cloudflare Worker URL
-    const WORKER_URL = "https://twikoo-cloudflare.ertertertet07.workers.dev";
-
-    // Patch Twikoo's uploadImage to use your Worker (which forwards to ImgBB)
-    window.twikooUploadImage = async (file) => {
-      const reader = new FileReader();
-      return new Promise((resolve, reject) => {
-        reader.onload = async () => {
-          try {
-            const res = await fetch(WORKER_URL, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                event: "UPLOAD_IMAGE",
-                photo: reader.result
-              })
-            });
-            const json = await res.json();
-            if (json.code === 0) {
-              resolve(json.data.url); // Twikoo expects URL string
-            } else {
-              reject(new Error(json.err || "Upload failed"));
-            }
-          } catch (e) {
-            reject(e);
-          }
-        };
-        reader.readAsDataURL(file);
-      });
-    };
-
-    // Initialize Twikoo
     twikoo.init({
+      envId: "https://twikoo-cloudflare.ertertertet07.workers.dev", // your Worker endpoint
       el: "#tcomment",
-      envId: WORKER_URL, // your Worker URL
-      lang: "en"
-    });
+      lang: "en" // optional: force UI to English
+    })
   </script>
 </body>
 </html>
