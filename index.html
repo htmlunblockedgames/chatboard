@@ -2,40 +2,133 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Chatboard · Twikoo on Cloudflare Worker</title>
+  <title>Chatboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- Twikoo UI (frontend) -->
+  <script src="https://cdn.jsdelivr.net/npm/twikoo@1.6.40/dist/twikoo.all.min.js"></script>
   <style>
-    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial,sans-serif;background:#0b0c10;color:#e6e6e6;margin:0}
-    .wrap{max-width:880px;margin:48px auto;padding:0 16px}
-    h1{font-size:24px;margin:0 0 8px}
-    .note{opacity:.8;font-size:14px;margin:0 0 24px}
-    a{color:#79b8ff}
-    /* Twikoo theme tweak (optional) */
-    .tk-comments{background:#0f1115;border-radius:12px;padding:8px 8px 12px}
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 0; background:#0b0b0b; color:#eaeaea; }
+    header { padding:16px; border-bottom:1px solid #252525; display:flex; gap:12px; align-items:center; flex-wrap:wrap;}
+    header h1 { font-size:18px; margin:0; font-weight:600; }
+    .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap;}
+    input[type="text"] { padding:8px 10px; border:1px solid #333; background:#141414; color:#eaeaea; border-radius:8px; min-width:260px;}
+    button { padding:8px 12px; border-radius:8px; border:1px solid #3a3a3a; background:#1c1c1c; color:#eaeaea; cursor:pointer;}
+    button:hover { background:#242424; }
+    main { max-width:900px; margin: 20px auto; padding: 0 16px 40px; }
+    section { margin-top:16px; border:1px solid #222; border-radius:12px; overflow:hidden; }
+    section header { background:#111; border-bottom:1px solid #222; }
+    #uploadTester { padding:14px; display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+    #uploadLog { white-space:pre-wrap; background:#0f0f0f; border-top:1px dashed #2a2a2a; padding:12px; font-size:13px; color:#bdbdbd; }
+    .hint { font-size:12px; color:#a3a3a3; }
+    a { color:#87b1ff; }
   </style>
 </head>
 <body>
-  <div class="wrap">
+  <header>
     <h1>Chatboard</h1>
-    <p class="note">
-      Connected to your Cloudflare Worker:
-      <code>https://twikoo-cloudflare.ertertertet07.workers.dev</code>
+    <div class="row">
+      <span class="hint">Connected to Worker:</span>
+      <code id="envIdShow"></code>
+    </div>
+    <div class="row">
+      <span class="hint">This page URL used by Twikoo:</span>
+      <code id="pagePathShow"></code>
+    </div>
+  </header>
+
+  <main>
+    <!-- Twikoo comments -->
+    <section>
+      <header><strong>Comments</strong></header>
+      <div id="tcomment"></div>
+    </section>
+
+    <!-- Image upload tester (talks directly to your Worker) -->
+    <section>
+      <header><strong>Image Upload Tester</strong></header>
+      <div id="uploadTester">
+        <input type="file" id="fileInput" accept="image/*" />
+        <button id="btnUpload">Upload via Worker</button>
+        <span class="hint">This calls <code>event: "UPLOAD_IMAGE"</code> on your Worker and prints the result below.</span>
+      </div>
+      <div id="uploadLog">Waiting…</div>
+    </section>
+
+    <p class="hint" style="margin-top:16px">
+      Tips:
+      <br>• Twikoo uses <code>location.pathname</code> as the page key. On GitHub Pages this will be <code>/chatboard/</code>.
+      <br>• Your Worker CORS is already set to allow <code>https://htmlunblockedgames.github.io</code> (and your Sites domain).
+      <br>• Image uploads go to IMGBB through the Worker (you configured <code>IMGBB_KEY</code>).
     </p>
+  </main>
 
-    <!-- Twikoo container -->
-    <div id="tcomment"></div>
+  <script>
+    // === CONFIG: point to your deployed Worker ===
+    const ENV_ID = 'https://twikoo-cloudflare.ertertertet07.workers.dev'; // your Worker
+    // If you need to force a path key, set PAGE_PATH = '/chatboard/';
+    // Otherwise Twikoo will use location.pathname automatically.
+    const PAGE_PATH = '/chatboard/';
 
-    <!-- Optional hint -->
-    <p class="note">
-      Tip: use the floating “Upload image” button to insert images.  
-      Make sure CORS on your Worker allows this origin.
-    </p>
-  </div>
+    // Show debug info on page
+    document.getElementById('envIdShow').textContent = ENV_ID;
+    document.getElementById('pagePathShow').textContent = PAGE_PATH;
 
-  <!-- Twikoo (CDN) -->
-  <script src="https://cdn.jsdelivr.net/npm/twikoo/dist/twikoo.all.min.js"></script>
+    // Initialize Twikoo
+    twikoo.init({
+      envId: ENV_ID,
+      el: '#tcomment',
+      // Twikoo uses current page automatically; we pass "path" to be explicit for GitHub Pages
+      path: PAGE_PATH
+      // No extra image config needed: Twikoo editor's image button will call Worker -> UPLOAD_IMAGE.
+    });
 
-  <!-- Your client helper (must sit next to this HTML) -->
-  <script src="./chatboard.js"></script>
+    // ---------- Image Upload Tester ----------
+    const fileInput = document.getElementById('fileInput');
+    const btnUpload = document.getElementById('btnUpload');
+    const uploadLog = document.getElementById('uploadLog');
+
+    function log(msg) {
+      uploadLog.textContent = (typeof msg === 'string') ? msg : JSON.stringify(msg, null, 2);
+    }
+
+    function fileToDataURL(file) {
+      return new Promise((resolve, reject) => {
+        const fr = new FileReader();
+        fr.onload = () => resolve(fr.result);
+        fr.onerror = reject;
+        fr.readAsDataURL(file);
+      });
+    }
+
+    async function uploadViaWorker(dataUrl) {
+      const res = await fetch(ENV_ID, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ event: 'UPLOAD_IMAGE', photo: dataUrl })
+      });
+      return res.json();
+    }
+
+    btnUpload.addEventListener('click', async () => {
+      const file = fileInput.files && fileInput.files[0];
+      if (!file) return log('Choose an image first.');
+      try {
+        log('Reading file…');
+        const dataUrl = await fileToDataURL(file);
+        log('Uploading to Worker…');
+        const out = await uploadViaWorker(dataUrl);
+        if (out.code === 0 && out.data && out.data.url) {
+          log(out);
+          // Also copy markdown to clipboard for convenience
+          const md = `![](${out.data.url})`;
+          try { await navigator.clipboard.writeText(md); } catch {}
+        } else {
+          log(out);
+        }
+      } catch (e) {
+        log('Upload failed: ' + e.message);
+      }
+    });
+  </script>
 </body>
 </html>
