@@ -1,41 +1,41 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>Chatboard</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Chatboard · Twikoo on Cloudflare Worker</title>
   <style>
-    body {
-      font-family: Arial, sans-serif;
-      margin: 0;
-      padding: 20px;
-      background: #f5f5f5;
-    }
-    h1 {
-      text-align: center;
-    }
-    #tcomment {
-      max-width: 800px;
-      margin: 20px auto;
-      background: #fff;
-      padding: 15px;
-      border-radius: 8px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-    }
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial,sans-serif;background:#0b0c10;color:#e6e6e6;margin:0}
+    .wrap{max-width:880px;margin:48px auto;padding:0 16px}
+    h1{font-size:24px;margin:0 0 8px}
+    .note{opacity:.8;font-size:14px;margin:0 0 24px}
+    a{color:#79b8ff}
+    /* Twikoo theme tweak (optional) */
+    .tk-comments{background:#0f1115;border-radius:12px;padding:8px 8px 12px}
   </style>
 </head>
 <body>
-  <h1>Chatboard</h1>
-  <div id="tcomment"></div>
+  <div class="wrap">
+    <h1>Chatboard</h1>
+    <p class="note">
+      Connected to your Cloudflare Worker:
+      <code>https://twikoo-cloudflare.ertertertet07.workers.dev</code>
+    </p>
 
-  <!-- Twikoo -->
+    <!-- Twikoo container -->
+    <div id="tcomment"></div>
+
+    <!-- Optional hint -->
+    <p class="note">
+      Tip: use the floating “Upload image” button to insert images.  
+      Make sure CORS on your Worker allows this origin.
+    </p>
+  </div>
+
+  <!-- Twikoo (CDN) -->
   <script src="https://cdn.jsdelivr.net/npm/twikoo/dist/twikoo.all.min.js"></script>
-  <script>
-    twikoo.init({
-      envId: "https://twikoo-cloudflare.ertertertet07.workers.dev", // your Worker endpoint
-      el: "#tcomment",
-      lang: "en" // optional: force UI to English
-    })
-  </script>
+
+  <!-- Your client helper (must sit next to this HTML) -->
+  <script src="./chatboard.js"></script>
 </body>
 </html>
