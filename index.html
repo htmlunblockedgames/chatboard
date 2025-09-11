@@ -109,7 +109,6 @@
     .nick{color:#1f2127;font-weight:800}
     .content{margin-top:6px;line-height:1.58;word-wrap:break-word}
     .content img{max-width:480px;border-radius:10px;border:1px solid var(--border);display:block;margin:8px 0;background:#fafafa}
-    .children{margin-top:10px;padding-left:52px;display:flex;flex-direction:column;gap:10px}
 
     /* Actions */
     .actions{display:flex;gap:14px;align-items:center;margin-top:8px}
@@ -119,8 +118,14 @@
       user-select:none;
     }
     .action:hover{background:#f8f8f8}
-    .likes{font-size:12px;color:var(--muted)}
-    .liked{color:#0280ca}
+
+    /* Replies toggle bar + container */
+    .replies-bar{
+      margin-top:8px; display:flex; align-items:center; justify-content:flex-start; gap:10px;
+      background:#f6f9ff; border:1px dashed #cfe1ff; color:#0280ca;
+      padding:8px 10px; border-radius:10px; font-size:12px; cursor:pointer; user-select:none;
+    }
+    .replies{display:none; margin-top:10px; padding-left:52px; display:flex; flex-direction:column; gap:10px}
 
     /* Load older – full bubble width */
     #loadMore{
@@ -202,8 +207,8 @@
     const state = { all:new Map(), tops:[] }; // id -> comment, plus tops[]
     let loading=false;
     let earliestMainCreated=null; // smallest created of current top-levels
-    /** @type {{_id:string,id?:string,rid?:string,nick?:string}|null} */
-    let replyTarget=null;
+    let replyTarget=null; // {_id, rid, nick}
+    const expanded = new Set(); // top-level ids with visible replies
 
     // Limits text
     limitMbEl.textContent=MAX_FILE_MB;
@@ -235,29 +240,23 @@
       catch{ connEl.textContent="Status: Offline"; connEl.classList.remove("ok"); connEl.classList.add("bad"); }
     }
 
-    // ===== State building (handles replies even if server returns flat list) =====
+    // ===== State building (replies grouped under top-level) =====
     function mergeList(list){
-      // Add/overwrite basic objects first
       for (const c of list){
         const id = c._id || c.id;
         if (!id) continue;
-        // Keep existing likes/children if already present
         const prev = state.all.get(id) || {};
         state.all.set(id, { ...prev, ...c, _id:id, children:[] });
       }
-      // Clear children arrays
       for (const obj of state.all.values()) obj.children = [];
-      // Attach children by rid
       for (const c of state.all.values()){
         if (c.rid && c.rid !== ""){
           const p = state.all.get(c.rid);
           if (p) p.children.push(c);
         }
       }
-      // Compute & sort tops
       state.tops = Array.from(state.all.values()).filter(x => (x.rid||"")==="");
       state.tops.sort((a,b)=>(b.created||0)-(a.created||0));
-      // Update earliest
       if (state.tops.length){
         earliestMainCreated = Math.min(...state.tops.map(x=>x.created||Date.now()));
       } else {
@@ -270,22 +269,32 @@
       const frag=document.createDocumentFragment();
       for (const c of state.tops){
         const node = renderMsg(c);
+        // replies bar
         if (Array.isArray(c.children) && c.children.length){
-          const wrap=document.createElement("div"); wrap.className="children";
-          // sort children by created asc
-          c.children.sort((a,b)=>(a.created||0)-(b.created||0));
-          for (const ch of c.children) wrap.appendChild(renderMsg(ch,true));
-          node.appendChild(wrap);
+          node.appendChild(renderRepliesBar(c));
+          // replies container (toggle)
+          const cont = document.createElement("div");
+          cont.className="replies";
+          cont.id = "replies-"+c._id;
+          if (expanded.has(c._id)) {
+            buildReplies(cont, c);
+            cont.style.display="flex";
+          } else {
+            cont.style.display="none";
+          }
+          node.appendChild(cont);
+        } else {
+          // no replies bar, but still allow replying
+          node.appendChild(renderRepliesBar(c, true));
         }
         frag.appendChild(node);
       }
       messagesEl.appendChild(frag);
-      // Toggle loadMore visibility
       if (state.tops.length) { loadMoreBtn.style.display="inline-flex"; loadMoreBtn.disabled=false; loadMoreBtn.textContent="Load older"; }
       else { loadMoreBtn.style.display="none"; }
     }
 
-    function renderMsg(c,isChild=false){
+    function renderMsg(c){
       const cid = c._id || c.id;
       const wrap=document.createElement("div"); wrap.className="msg"; wrap.dataset.cid=cid;
 
@@ -301,20 +310,36 @@
 
       const content=document.createElement("div"); content.className="content"; content.innerHTML=c.comment||"";
 
-      // Like/Reply
-      const likeList = Array.isArray(c.like) ? c.like : [];
-      const didILike = TK_TOKEN ? likeList.includes(TK_TOKEN) : false;
-      const likeCount = likeList.length || 0;
-
       const actions=document.createElement("div"); actions.className="actions";
-      const likeBtn=document.createElement("span"); likeBtn.className="action"+(didILike?" liked":""); likeBtn.dataset.action="like"; likeBtn.textContent=didILike?"♥ Liked":"♡ Like";
-      const likes=document.createElement("span"); likes.className="likes"; likes.textContent = likeCount>0 ? `${likeCount} like${likeCount>1?"s":""}` : "0 likes";
       const replyBtn=document.createElement("span"); replyBtn.className="action"; replyBtn.dataset.action="reply"; replyBtn.textContent="↩ Reply";
-      actions.append(likeBtn,likes,replyBtn);
+      actions.append(replyBtn);
 
       bubble.append(meta,content,actions);
       wrap.append(avatar,bubble);
       return wrap;
+    }
+
+    function renderRepliesBar(parent, noReplies=false){
+      const bar=document.createElement("div");
+      bar.className="replies-bar";
+      bar.dataset.action="toggleReplies";
+      bar.dataset.parent = parent._id;
+      const count = parent.children?.length || 0;
+      if (noReplies) {
+        bar.textContent = "No replies yet • Click ‘Reply’ to start a thread";
+        bar.style.cursor="default";
+        bar.dataset.action=""; // disable toggle when none
+      } else {
+        const isOpen = expanded.has(parent._id);
+        bar.textContent = isOpen ? `Hide replies (${count})` : `Show replies (${count})`;
+      }
+      return bar;
+    }
+
+    function buildReplies(container, parent){
+      container.innerHTML="";
+      const kids = (parent.children||[]).slice().sort((a,b)=>(a.created||0)-(b.created||0));
+      for (const ch of kids) container.appendChild(renderMsg(ch));
     }
 
     // ===== Loading =====
@@ -371,7 +396,6 @@
       if (!html){ setStatus("Type a message first.", true); return; }
       if (html.length > MAX_CHARS){ setStatus(`Message too long. Max ${MAX_CHARS} characters.`, true); return; }
 
-      // reply fields if replying
       let pid, rid;
       if (replyTarget){
         const cid = replyTarget._id || replyTarget.id;
@@ -419,15 +443,9 @@
       finally{ btnAttach.disabled=false; btnAttach.textContent="Attach image"; }
     }
 
-    async function toggleLike(cid){
-      try{ await api({event:"COMMENT_LIKE", id: cid}); await loadLatest(); }
-      catch{ setStatus("Failed to like message.", true); }
-    }
-
     function setReplyTarget(commentEl){
       const cid = commentEl?.dataset?.cid; if (!cid) return;
       const who = commentEl.querySelector('.nick')?.textContent || "someone";
-      // Find existing object to grab rid if replying to a reply
       const obj = state.all.get(cid);
       const rid = obj?.rid || "";
       replyTarget = {_id: cid, rid, nick: who};
@@ -445,14 +463,32 @@
     textEl.addEventListener("input", ()=>{ const n=textEl.value.length; charCount.textContent=String(n); if (n>MAX_CHARS) setStatus(`Message too long. Max ${MAX_CHARS} characters.`, true); else if (statusEl.textContent.startsWith("Message too long")) setStatus(""); });
     fileEl.addEventListener("change", ()=>{ const f=fileEl.files&&fileEl.files[0]; fileInfo.textContent = f ? `${f.name} · ${(f.size/1024/1024).toFixed(2)} MB` : ""; });
 
-    // Delegate Like/Reply clicks
+    // Delegate Reply / Toggle clicks
     messagesEl.addEventListener("click",(e)=>{
-      const btn = e.target.closest('[data-action]'); if (!btn) return;
-      const action = btn.dataset.action;
-      const card = e.target.closest('.msg'); if (!card) return;
-      const cid = card.dataset.cid; if (!cid) return;
-      if (action==='like') toggleLike(cid);
-      else if (action==='reply') setReplyTarget(card);
+      const card = e.target.closest('.msg');
+      const toggle = e.target.closest('.replies-bar');
+      const btn = e.target.closest('[data-action="reply"]');
+
+      if (btn && card){ setReplyTarget(card); return; }
+
+      if (toggle){
+        const pid = toggle.dataset.parent;
+        if (!pid) return;
+        const cont = document.getElementById("replies-"+pid);
+        const parent = state.all.get(pid);
+        if (!cont || !parent) return;
+
+        if (expanded.has(pid)){
+          cont.style.display="none";
+          expanded.delete(pid);
+          toggle.textContent = `Show replies (${(parent.children||[]).length})`;
+        }else{
+          if (!cont.childElementCount) buildReplies(cont, parent);
+          cont.style.display="flex";
+          expanded.add(pid);
+          toggle.textContent = `Hide replies (${(parent.children||[]).length})`;
+        }
+      }
     });
 
     // Drag & drop image onto textarea
