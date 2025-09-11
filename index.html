@@ -1,362 +1,65 @@
-```html
 <!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Chatboard</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+
+  <!-- Twikoo UI (regular, all features) -->
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" />
+  <script src="https://cdn.jsdelivr.net/npm/twikoo@1.6.40/dist/twikoo.all.min.js"></script>
+
   <style>
-    :root{
-      --bg1:#0b1021; --bg2:#111a44;
-      --card:rgba(22,28,60,.72);
-      --card-strong:#151b46;
-      --text:#eef1fb; --muted:#9aa3c7; --border:rgba(140,160,255,.16);
-      --accent:#7aa2ff; --accent-2:#5b7cff; --danger:#ff6b6b; --ok:#34d399;
-      --shadow:0 10px 30px rgba(5,10,30,.35), inset 0 1px 0 rgba(255,255,255,.04);
-      --radius:18px;
-    }
-    *{box-sizing:border-box}
-    html,body{height:100%}
-    body{
-      margin:0; font-family:Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-      color:var(--text);
-      background:
-        radial-gradient(1200px 800px at 90% -10%, rgba(95,140,255,.20), transparent 60%),
-        radial-gradient(1200px 800px at -10% 110%, rgba(117,81,255,.20), transparent 60%),
-        linear-gradient(180deg, var(--bg1), var(--bg2));
-    }
-    header{
-      position:sticky; top:0; z-index:10;
-      backdrop-filter: blur(16px); background:linear-gradient(180deg, rgba(7,10,28,.6), rgba(7,10,28,.25));
-      border-bottom:1px solid var(--border);
-    }
-    .bar{
-      max-width:980px; margin:0 auto; padding:16px;
-      display:flex; align-items:center; justify-content:space-between; gap:12px;
-    }
-    h1{margin:0; font-size:18px; letter-spacing:.2px; display:flex; align-items:center; gap:10px}
-    .logo{
-      width:28px; height:28px; border-radius:8px;
-      background:conic-gradient(from 180deg,#7aa2ff,#8b7aff,#7aa2ff);
-      box-shadow: var(--shadow);
-    }
-    .pill{font-size:12px; color:#cfe0ff; border:1px solid var(--border); padding:6px 10px; border-radius:999px; background:rgba(15,20,64,.6)}
-    .pill .ok{color:var(--ok)}
-    .wrap{max-width:980px; margin:18px auto; padding:0 16px; display:grid; gap:18px}
-    .card{
-      background:var(--card);
-      border:1px solid var(--border);
-      border-radius:var(--radius);
-      box-shadow: var(--shadow);
-    }
+    /* Page wrapper */
+    body{margin:0;background:#0b1021;color:#eaf0ff;font:14px/1.6 system-ui, -apple-system, Segoe UI, Roboto, Inter, Arial, sans-serif}
+    .wrap{max-width:900px;margin:32px auto;padding:0 16px}
+    h1{margin:0 0 16px;font-size:22px;font-weight:700;letter-spacing:.2px}
+    .card{background:rgba(22,28,60,.76);border:1px solid rgba(140,160,255,.14);border-radius:14px;box-shadow:0 10px 30px rgba(5,10,30,.35), inset 0 1px 0 rgba(255,255,255,.04);padding:14px}
+    a{color:#7aa2ff}
 
-    /* Composer */
-    #composer{padding:14px; display:grid; gap:12px}
-    .row{display:flex; gap:10px; align-items:center; flex-wrap:wrap}
-    input[type="text"], textarea{
-      width:100%; padding:12px 14px; border-radius:14px; border:1px solid var(--border);
-      background:#0e1442; color:var(--text); outline:none;
-      transition:border-color .2s, box-shadow .2s;
-    }
-    input[type="text"]:focus, textarea:focus{border-color:#8ea4ff; box-shadow:0 0 0 3px rgba(126,152,255,.18)}
-    textarea{min-height:120px; resize:vertical}
-    input[type="file"]{
-      appearance:none; padding:10px 12px; border-radius:12px; border:1px dashed var(--border);
-      background:#0e1442; color:var(--muted);
-    }
-    .hint{color:var(--muted); font-size:12px}
+    /* Hide email & website fields (keep everything else) */
+    .twikoo input[type="email"],
+    .twikoo input[type="url"] { display:none !important; }
+    /* Hide their wrappers in modern browsers */
+    .twikoo .el-form-item:has(input[type="email"]),
+    .twikoo .el-form-item:has(input[type="url"]) { display:none !important; }
 
-    button{
-      padding:11px 14px; border-radius:12px; border:1px solid var(--border);
-      background:#17205a; color:#fff; cursor:pointer; transition:transform .06s ease, opacity .2s, background .2s;
-    }
-    button:hover{transform:translateY(-1px)}
-    button:active{transform:translateY(0)}
-    button.primary{background:linear-gradient(180deg, var(--accent), var(--accent-2)); border-color:transparent}
-    button:disabled{opacity:.6; cursor:not-allowed}
-
-    #status{padding:10px 12px; border-top:1px solid var(--border); color:var(--muted); font-size:12px}
-
-    /* Messages */
-    #stream{padding:10px; display:flex; flex-direction:column; gap:10px; min-height:42vh}
-    .msg{display:flex; gap:12px; padding:12px; border:1px solid var(--border); border-radius:14px; background:rgba(255,255,255,.03)}
-    .avatar{width:38px; height:38px; border-radius:12px; background:#253070; display:flex; align-items:center; justify-content:center; font-weight:700; color:#d7e2ff; flex:0 0 38px; overflow:hidden}
-    .avatar img{width:100%; height:100%; object-fit:cover}
-    .bubble{flex:1; min-width:0}
-    .meta{font-size:12px; color:var(--muted); display:flex; gap:8px; align-items:center}
-    .nick{color:#e3ecff; font-weight:600}
-    .content{margin-top:6px; line-height:1.6; word-wrap:break-word}
-    .content img{max-width:520px; width:100%; border-radius:12px; border:1px solid var(--border); display:block; margin:8px 0; background:#0b1035}
-    .children{margin-top:10px; padding-left:46px; display:flex; flex-direction:column; gap:8px}
-    #loadMore{margin:10px auto 14px; display:block}
-
-    /* Footer debug (hidden) */
-    #debugBox{display:none}
-    pre{margin:0; padding:12px; max-height:240px; overflow:auto; white-space:pre-wrap}
-    a{color:var(--accent)}
-    .danger{color:var(--danger)}
+    /* Optional: compact toolbar */
+    .twikoo .tk-action { gap:6px }
   </style>
 </head>
 <body>
-  <header>
-    <div class="bar">
-      <h1><span class="logo"></span> Chatboard</h1>
-      <div class="pill">Status: <span id="conn">checking…</span></div>
+  <div class="wrap">
+    <h1>Chatboard</h1>
+    <div class="card">
+      <!-- Regular Twikoo container -->
+      <div id="tcomment"></div>
     </div>
-  </header>
-
-  <main class="wrap">
-    <!-- Composer FIRST (moved above comments) -->
-    <section id="composer" class="card">
-      <div class="row">
-        <input id="nick" type="text" placeholder="Nickname (optional, defaults to Anonymous)" />
-      </div>
-
-      <div class="row">
-        <textarea id="text" placeholder="Write a message… you can paste or attach an image."></textarea>
-      </div>
-
-      <div class="row">
-        <input id="file" type="file" accept="image/*" />
-        <button id="btnAttach">Attach image</button>
-        <button id="btnSend" class="primary">Send</button>
-        <span class="hint">Images upload through your Worker → IMGBB.</span>
-      </div>
-
-      <div id="status">Ready.</div>
-    </section>
-
-    <!-- Message stream -->
-    <section class="card">
-      <div id="stream"></div>
-      <button id="loadMore" class="primary" style="display:none">Load older</button>
-    </section>
-
-    <section class="card" id="debugBox">
-      <pre id="debug"></pre>
-    </section>
-  </main>
+  </div>
 
   <script>
-  ;(() => {
-    // ── CONFIG (edit if you move host/path) ─────────────────────────────────────
-    const WORKER_URL    = "https://twikoo-cloudflare.ertertertet07.workers.dev";
-    const PAGE_URL_PATH = "/chatboard/";
-    const PAGE_HREF     = "https://htmlunblockedgames.github.io/chatboard/";
-    // ───────────────────────────────────────────────────────────────────────────
+    // IMPORTANT: this must match the path you used in Worker/D1 data
+    const PAGE_PATH = "/chatboard/";
 
-    // DOM
-    const $ = id => document.getElementById(id);
-    const stream = $("stream");
-    const loadMoreBtn = $("loadMore");
-    const nickEl = $("nick");
-    const textEl = $("text");
-    const fileEl = $("file");
-    const btnAttach = $("btnAttach");
-    const btnSend = $("btnSend");
-    const statusEl = $("status");
-    const connEl = $("conn");
-    const debug = $("debug");
-    const debugBox = $("debugBox");
+    // Init regular Twikoo with your Cloudflare Worker backend
+    twikoo.init({
+      el: "#tcomment",
+      envId: "https://twikoo-cloudflare.ertertertet07.workers.dev",
+      path: PAGE_PATH,
+      lang: "en",
+    });
 
-    // State
-    let earliestMainCreated = null;
-    let loading = false;
-
-    // Utils
-    const log = (...a) => { if (debug) { debugBox.style.display=""; debug.textContent += a.join(" ") + "\n"; } };
-    const setStatus = (t, bad=false) => { statusEl.textContent = t; statusEl.style.color = bad ? "var(--danger)" : "var(--muted)"; };
-    const fmtTime = ts => new Date(ts).toLocaleString();
-    const initialOf = s => (s||"A").trim().charAt(0).toUpperCase();
-
-    // API
-    async function api(payload){
-      const res = await fetch(WORKER_URL, {
-        method:"POST",
-        headers:{ "content-type":"application/json" },
-        body: JSON.stringify(payload)
+    // Extra safety for older browsers that don't support :has():
+    function hideMailAndLink() {
+      document.querySelectorAll('.twikoo input[type="email"], .twikoo input[type="url"]').forEach(inp => {
+        const box = inp.closest('.el-form-item') || inp.closest('.tk-input') || inp.parentElement;
+        if (box) box.style.display = 'none';
+        inp.style.display = 'none';
       });
-      const json = await res.json().catch(()=> ({}));
-      log("API", JSON.stringify(payload), "->", JSON.stringify(json));
-      return json;
     }
-
-    async function checkConnection(){
-      try{
-        const r = await api({ event:"GET_FUNC_VERSION" });
-        if (r?.version){ connEl.textContent = `v${r.version}`; connEl.style.color = "var(--ok)"; }
-        else connEl.textContent = "ok";
-      }catch{ connEl.textContent="offline"; connEl.style.color="var(--danger)"; }
-    }
-
-    // Loading & pagination
-    async function loadLatest(){
-      if (loading) return; loading = true; setStatus("Loading messages…");
-      try{
-        const r = await api({ event:"COMMENT_GET", url: PAGE_URL_PATH });
-        renderComments(r?.data || []);
-        const tops = (r?.data || []).filter(c => (c.rid||"")==="");
-        if (tops.length){
-          earliestMainCreated = Math.min(...tops.map(c => c.created || Date.now()));
-          loadMoreBtn.style.display = "inline-block";
-        }
-        setStatus("Loaded.");
-      }catch(e){ setStatus("Failed to load messages.", true); }
-      finally{ loading = false; }
-    }
-
-    async function loadOlder(){
-      if (loading || !earliestMainCreated) return;
-      loading = true; loadMoreBtn.disabled = true; loadMoreBtn.textContent = "Loading…";
-      try{
-        const r = await api({ event:"COMMENT_GET", url: PAGE_URL_PATH, before: earliestMainCreated });
-        const data = r?.data || [];
-        if (data.length){
-          prependComments(data);
-          const tops = data.filter(c => (c.rid||"")==="");
-          if (tops.length) earliestMainCreated = Math.min(earliestMainCreated, ...tops.map(c => c.created || Date.now()));
-          loadMoreBtn.textContent = "Load older"; loadMoreBtn.disabled = false;
-        } else {
-          loadMoreBtn.textContent = "No more"; loadMoreBtn.disabled = true;
-        }
-      }catch(e){ setStatus("Failed loading older.", true); }
-      finally{ loading = false; }
-    }
-
-    // Send
-    async function sendMessage(){
-      const nick = nickEl.value.trim() || "Anonymous";
-      const html = textEl.value.trim();
-      if (!html){ setStatus("Type a message first.", true); return; }
-      btnSend.disabled = true; btnSend.textContent = "Sending…"; setStatus("Sending…");
-      try{
-        const r = await api({ event:"COMMENT_SUBMIT", nick, comment: html, url: PAGE_URL_PATH, href: PAGE_HREF, ua: navigator.userAgent });
-        if (r?.id){
-          setStatus("Sent!");
-          textEl.value = "";
-          await loadLatest();
-        } else {
-          throw new Error(r?.message || "Unknown error");
-        }
-      }catch(e){ setStatus("Send failed: " + e.message, true); }
-      finally{ btnSend.disabled=false; btnSend.textContent="Send"; }
-    }
-
-    // Upload
-    async function attachImage(){
-      const f = fileEl.files?.[0];
-      if (!f){ setStatus("Choose an image file first.", true); return; }
-      btnAttach.disabled = true; btnAttach.textContent = "Uploading…"; setStatus("Uploading image…");
-      try{
-        const dataURL = await fileToDataURL(f);
-        const r = await api({ event:"UPLOAD_IMAGE", photo: dataURL });
-        if (r?.code===0 && r?.data?.url){
-          insertAtCursor(textEl, `\n<img src="${r.data.url}" alt="">\n`);
-          setStatus("Image attached.");
-        } else throw new Error(r?.err || r?.message || "Upload failed");
-      }catch(e){ setStatus("Image upload failed: " + e.message, true); }
-      finally{ btnAttach.disabled=false; btnAttach.textContent="Attach image"; fileEl.value=""; }
-    }
-
-    // Render
-    function renderComments(list){
-      stream.innerHTML = "";
-      appendComments(list);
-    }
-    function appendComments(list){
-      const tops = list.filter(c => (c.rid||"")==="");
-      for (const c of tops){
-        stream.appendChild(renderMsg(c));
-        if (Array.isArray(c.children)){
-          const kids = document.createElement("div"); kids.className="children";
-          for (const ch of c.children) kids.appendChild(renderMsg(ch, true));
-          stream.lastElementChild.appendChild(kids);
-        }
-      }
-    }
-    function prependComments(list){
-      const frag = document.createDocumentFragment();
-      const tops = list.filter(c => (c.rid||"")==="");
-      for (const c of tops){
-        const node = renderMsg(c);
-        if (Array.isArray(c.children) && c.children.length){
-          const kids = document.createElement("div"); kids.className="children";
-          for (const ch of c.children) kids.appendChild(renderMsg(ch, true));
-          node.appendChild(kids);
-        }
-        frag.appendChild(node);
-      }
-      stream.prepend(frag);
-    }
-    function renderMsg(c){
-      const wrap = document.createElement("div"); wrap.className="msg";
-      const avatar = document.createElement("div"); avatar.className="avatar";
-      if (c.avatar){ const img=document.createElement("img"); img.src=c.avatar; img.alt=c.nick||"avatar"; avatar.appendChild(img); }
-      else avatar.textContent = initialOf(c.nick);
-      const bubble = document.createElement("div"); bubble.className="bubble";
-      const meta = document.createElement("div"); meta.className="meta";
-      const nick = document.createElement("span"); nick.className="nick"; nick.textContent = c.nick || "Anonymous";
-      const time = document.createElement("span"); time.textContent = fmtTime(c.created || Date.now());
-      meta.append(nick,time);
-      const content = document.createElement("div"); content.className="content"; content.innerHTML = c.comment || "";
-      bubble.append(meta, content);
-      wrap.append(avatar, bubble);
-      return wrap;
-    }
-
-    // Helpers
-    function fileToDataURL(file){
-      return new Promise((resolve, reject) => { const fr=new FileReader(); fr.onerror=()=>reject(fr.error||new Error("FileReader error")); fr.onload=()=>resolve(fr.result); fr.readAsDataURL(file); });
-    }
-    function insertAtCursor(el, text){
-      const [s,e] = [el.selectionStart ?? el.value.length, el.selectionEnd ?? el.value.length];
-      el.value = el.value.slice(0,s)+text+el.value.slice(e);
-      const pos = s + text.length; el.setSelectionRange(pos,pos); el.focus();
-    }
-
-    // Shortcuts
-    textEl.addEventListener("keydown", e => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "Enter"){ e.preventDefault(); sendMessage(); }
-    });
-
-    // Paste image → upload
-    textEl.addEventListener("paste", async (e) => {
-      const item = [...(e.clipboardData?.items||[])].find(x => x.type?.startsWith("image/"));
-      if (!item) return;
-      e.preventDefault();
-      const f = item.getAsFile(); if (!f) return;
-      fileEl.files = new DataTransfer().files; // reset
-      // Direct upload
-      btnAttach.disabled = true; btnAttach.textContent = "Uploading…"; setStatus("Uploading pasted image…");
-      try{
-        const dataURL = await fileToDataURL(f);
-        const r = await api({ event:"UPLOAD_IMAGE", photo:dataURL });
-        if (r?.code===0 && r?.data?.url){ insertAtCursor(textEl, `\n<img src="${r.data.url}" alt="">\n`); setStatus("Image attached."); }
-        else throw new Error(r?.err || r?.message || "Upload failed");
-      }catch(err){ setStatus("Image upload failed: " + err.message, true); }
-      finally{ btnAttach.disabled=false; btnAttach.textContent="Attach image"; }
-    });
-
-    // Events
-    btnSend.addEventListener("click", sendMessage);
-    btnAttach.addEventListener("click", attachImage);
-    loadMoreBtn.addEventListener("click", loadOlder);
-
-    // DnD
-    textEl.addEventListener("dragover", e => e.preventDefault());
-    textEl.addEventListener("drop", async e => {
-      e.preventDefault();
-      const f = e.dataTransfer?.files?.[0];
-      if (f?.type?.startsWith("image/")){ fileEl.files = e.dataTransfer.files; await attachImage(); }
-    });
-
-    // Init
-    checkConnection();
-    loadLatest();
-  })();
+    const mo = new MutationObserver(hideMailAndLink);
+    mo.observe(document.getElementById('tcomment'), { childList: true, subtree: true });
+    hideMailAndLink();
   </script>
 </body>
 </html>
-```
