@@ -5,29 +5,32 @@
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>Poly Track Chatboard</title>
   <style>
-    /* ---------- Light theme inspired by Google Forms ---------- */
+    /* ===== Palette (from your site) ===== */
     :root{
-      --bg:#f6f5fb;            /* page background */
+      --bg:#fafafa;            /* page background */
       --panel:#ffffff;         /* card background */
-      --panel-2:#faf9ff;
-      --border:#e8e6f3;
-      --text:#1f1f1f;
-      --muted:#6b6b82;
-      --accent:#6b4fd3;        /* primary purple */
-      --accent-2:#5a3bb5;      /* hover */
+      --panel-2:#f5f5f5;       /* inputs background */
+      --border:#dadce0;        /* card/input border */
+      --border-2:#e0e0e0;
+      --text:#1f2125;          /* primary text */
+      --muted:#5f6369;         /* secondary text */
+      --accent:#2694d5;        /* primary blue */
+      --accent-2:#0280ca;      /* hover/darker blue */
       --ok:#0f9d58;            /* green */
       --danger:#d93025;        /* red */
-      --inner:18px;            /* inner horizontal padding used by lists */
       --radius:16px;
-      --shadow:0 8px 20px rgba(26,24,46,.08);
+      --shadow:0 8px 18px rgba(0,0,0,.05);
+      --inner:18px;            /* inner horizontal padding for lists */
     }
     *{box-sizing:border-box}
     html,body{height:100%}
+    /* “Heavy” look: use a single font everywhere and dial up weight */
     body{
       margin:0;
-      font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+      font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+      font-weight:600; /* heavy-ish default */
       background:
-        radial-gradient(900px 380px at 80% -10%, #efeaff 0%, transparent 60%),
+        radial-gradient(900px 380px at 80% -10%, #fdfdfd 0%, transparent 60%),
         var(--bg);
       color:var(--text);
       -webkit-font-smoothing:antialiased;
@@ -35,24 +38,22 @@
       letter-spacing:.1px;
     }
 
-    /* ---------- Header ---------- */
+    /* ===== Header ===== */
     header{
       padding:18px 16px;
       border-bottom:1px solid var(--border);
       display:flex;align-items:center;justify-content:space-between;
-      background:linear-gradient(180deg,#7656e6,#6b4fd3);
-      color:#fff;
+      background:linear-gradient(180deg,#ffffff,#fbfbfb);
     }
-    header h1{margin:0;font-size:18px;font-weight:700}
+    header h1{margin:0;font-size:20px;font-weight:800}
     .status{
-      font-size:12px;padding:6px 12px;border:1px solid rgba(255,255,255,.35);
-      border-radius:999px;background:rgba(255,255,255,.15);
-      backdrop-filter:saturate(130%) blur(4px);
+      font-size:12px;padding:6px 12px;border:1px solid var(--border);
+      border-radius:999px;background:#fefefe;color:var(--muted);
     }
-    .status.ok{color:#b6ffd2;border-color:rgba(0,0,0,.08)}
-    .status.bad{color:#ffd1d1;border-color:rgba(0,0,0,.08)}
+    .status.ok{color:#0b7d3b;border-color:#cfe8da;background:#f6fff9}
+    .status.bad{color:#b3261e;border-color:#f1c9c6;background:#fff6f5}
 
-    /* ---------- Layout ---------- */
+    /* ===== Layout ===== */
     .container{max-width:920px;margin:0 auto;padding:20px;display:grid;gap:18px}
     .panel{
       background:var(--panel);
@@ -61,7 +62,7 @@
       box-shadow:var(--shadow);
     }
 
-    /* ---------- Composer ---------- */
+    /* ===== Composer ===== */
     #composer{padding:18px;display:grid;gap:12px}
     .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
     .row-slim{gap:8px}
@@ -71,22 +72,24 @@
       outline:none;transition:border-color .15s, box-shadow .15s, background .2s;
     }
     input[type="text"]:focus, textarea:focus{
-      border-color:var(--accent); box-shadow:0 0 0 3px #6b4fd324;
+      border-color:var(--accent); box-shadow:0 0 0 3px #2694d522;
       background:#fff;
     }
     textarea{min-height:120px;resize:vertical;line-height:1.55}
 
     .btn{
       padding:10px 14px;border-radius:12px;border:1px solid var(--border);
-      background:#ede9ff;color:#2b1e6a;cursor:pointer;
+      background:#eaf5fc;color:#0f3c55;cursor:pointer;
       transition:transform .05s ease, background .15s, border-color .15s, color .15s;
-      font-weight:600;
+      font-weight:700;
+      min-width:132px; /* same visual size for “Choose” & “Attach” */
+      text-align:center;
     }
-    .btn:hover{background:#e4ddff;border-color:#d5cff7}
+    .btn:hover{background:#dff0fb;border-color:#cfe8f8}
     .btn:active{transform:translateY(1px)}
     .btn.primary{
       background:linear-gradient(180deg,var(--accent),var(--accent-2));
-      border-color:#4f36a9;color:#fff;
+      border-color:#197fb4;color:#fff;
     }
     .btn.primary:hover{filter:brightness(1.03)}
     .btn:disabled{opacity:.6;cursor:not-allowed}
@@ -100,7 +103,15 @@
     /* Status (inline, only when needed) */
     #status{display:none;font-size:12px;color:var(--muted)}
 
-    /* ---------- Messages ---------- */
+    /* Reply target pill */
+    #replyTo{
+      display:none; font-size:12px; color:var(--muted);
+      background:#f9f9f9; border:1px solid var(--border-2); padding:6px 10px;
+      border-radius:999px;
+    }
+    #replyCancel{margin-left:8px;color:var(--accent);cursor:pointer;font-weight:800}
+
+    /* ===== Messages ===== */
     #messages{padding:14px var(--inner);display:flex;flex-direction:column;gap:14px;min-height:36vh}
     .msg{
       display:flex;gap:12px;padding:12px 14px;border:1px solid var(--border);
@@ -108,16 +119,27 @@
     }
     .avatar{
       width:40px;height:40px;border-radius:50%;
-      background:#efe9ff;display:flex;align-items:center;justify-content:center;
-      font-weight:800;color:#5a3bb5;flex:0 0 40px;overflow:hidden
+      background:#b3c1fe22;display:flex;align-items:center;justify-content:center;
+      font-weight:900;color:#1f2127;flex:0 0 40px;overflow:hidden;border:1px solid #b3c1fe66;
     }
     .avatar img{width:100%;height:100%;object-fit:cover}
     .bubble{flex:1;min-width:0}
     .meta{font-size:12px;color:var(--muted);display:flex;gap:10px;align-items:center}
-    .nick{color:#3a2a86;font-weight:700}
+    .nick{color:#1f2127;font-weight:800}
     .content{margin-top:6px;line-height:1.58;word-wrap:break-word}
     .content img{max-width:480px;border-radius:10px;border:1px solid var(--border);display:block;margin:8px 0;background:#fafafa}
     .children{margin-top:10px;padding-left:52px;display:flex;flex-direction:column;gap:10px}
+
+    /* Action bar (Like / Reply) */
+    .actions{display:flex;gap:14px;align-items:center;margin-top:8px}
+    .action{
+      font-size:12px;color:var(--accent);cursor:pointer;font-weight:800;
+      background:#fdfdfd;border:1px solid var(--border-2);padding:6px 10px;border-radius:999px;
+      user-select:none;
+    }
+    .action:hover{background:#f8f8f8}
+    .likes{font-size:12px;color:var(--muted)}
+    .liked{color:#0280ca}
 
     /* Load more spans the same inner width as bubbles */
     #loadMore{
@@ -141,9 +163,15 @@
       <div class="row">
         <input id="nick" type="text" placeholder="Nickname (optional, default Anonymous)"/>
       </div>
+
+      <div id="replyTo" class="row">
+        Replying to <strong id="replyName"></strong><span id="replyCancel" title="Cancel reply">✕</span>
+      </div>
+
       <div class="row">
         <textarea id="text" placeholder="Type your message… You can also attach an image."></textarea>
       </div>
+
       <div class="row row-slim">
         <label for="file" class="btn file-btn" id="btnChoose">Choose image</label>
         <input id="file" type="file" accept="image/*"/>
@@ -153,6 +181,7 @@
           <button id="btnSend" class="btn primary">Send</button>
         </div>
       </div>
+
       <div class="row row-slim" style="margin-top:-2px">
         <span id="limits" class="limits">
           Images: PNG/JPG/GIF/WebP ≤ <span id="limitMb">5</span> MB · Message limit: <span id="limitChars">2000</span> chars · <span id="charCount">0</span>/<span id="limitChars2">2000</span>
@@ -186,11 +215,16 @@
     const fileEl=$("file"), btnChoose=$("btnChoose"), btnAttach=$("btnAttach");
     const btnSend=$("btnSend"), fileInfo=$("fileInfo"), statusEl=$("status"), connEl=$("conn");
     const limitMbEl=$("limitMb"), limitChars=$("limitChars"), limitChars2=$("limitChars2"), charCount=$("charCount");
+    const replyTo=$("replyTo"), replyName=$("replyName"), replyCancel=$("replyCancel");
 
     // State
     let earliestMainCreated=null;
     let loading=false;
     let TK_TOKEN = localStorage.getItem('twikoo_access_token') || null;
+
+    // Reply target (if any)
+    /** @type {{_id:string,id?:string,rid?:string,nick?:string}|null} */
+    let replyTarget = null;
 
     // Limits text
     limitMbEl.textContent=MAX_FILE_MB;
@@ -264,7 +298,7 @@
         const r = await api({event:"COMMENT_GET", url: PAGE_URL_PATH, before: earliestMainCreated});
         const data = Array.isArray(r?.data) ? r.data : [];
         if (data.length){
-          appendComments(data);
+          prependComments(data);
           const tops = data.filter(c => (c.rid||"")==="");
           if (tops.length){
             earliestMainCreated = Math.min(earliestMainCreated, ...tops.map(c=>c.created||Date.now()));
@@ -281,7 +315,7 @@
       }finally{ loading=false; }
     }
 
-    // Send a message
+    // Send a message (or reply)
     async function sendMessage(){
       const nick = nickEl.value.trim() || "Anonymous";
       const html = textEl.value.trim();
@@ -289,12 +323,25 @@
       if (!html){ setStatus("Type a message first.", true); return; }
       if (html.length > MAX_CHARS){ setStatus(`Message too long. Max ${MAX_CHARS} characters.`, true); return; }
 
+      // reply fields if replying
+      let pid, rid;
+      if (replyTarget){
+        const cid = replyTarget._id || replyTarget.id;
+        pid = cid;
+        rid = replyTarget.rid && replyTarget.rid !== "" ? replyTarget.rid : cid;
+      }
+
       btnSend.disabled=true; btnSend.textContent="Sending…"; setStatus("Sending…");
       try{
-        const r = await api({event:"COMMENT_SUBMIT", nick, comment: html, url: PAGE_URL_PATH, href: PAGE_HREF, ua: navigator.userAgent});
+        const payload = {event:"COMMENT_SUBMIT", nick, comment: html, url: PAGE_URL_PATH, href: PAGE_HREF, ua: navigator.userAgent};
+        if (pid) payload.pid = pid;
+        if (rid) payload.rid = rid;
+
+        const r = await api(payload);
         if (r && r.id){
           textEl.value=""; charCount.textContent="0";
           fileEl.value=""; fileInfo.textContent="";
+          clearReplyTarget();
           await loadLatest();
           setStatus(""); // clear
         }else{
@@ -334,6 +381,17 @@
       }
     }
 
+    // Toggle like
+    async function toggleLike(cid){
+      try{
+        await api({event:"COMMENT_LIKE", id: cid});
+        // Simple approach: refresh list so counts reflect accurately
+        await loadLatest();
+      }catch(e){
+        setStatus("Failed to like message.", true);
+      }
+    }
+
     // Translate common Chinese backend messages → English
     function prettifyError(msg){
       if (!msg) return "Unexpected error";
@@ -353,22 +411,33 @@
     // Rendering
     function renderComments(list){
       messagesEl.innerHTML="";
-      appendComments(list);
+      appendOrPrepend(list,false);
     }
-    function appendComments(list){
+    function prependComments(list){
+      appendOrPrepend(list,true);
+    }
+    function appendOrPrepend(list,isPrepend){
       const tops = list.filter(c => (c.rid||"")==="");
+      const frag = document.createDocumentFragment();
       for (const c of tops){
-        messagesEl.appendChild(renderMsg(c));
+        const node = renderMsg(c);
         if (Array.isArray(c.children) && c.children.length){
           const childrenWrap=document.createElement("div");
           childrenWrap.className="children";
           for (const ch of c.children) childrenWrap.appendChild(renderMsg(ch,true));
-          messagesEl.lastElementChild.appendChild(childrenWrap);
+          node.appendChild(childrenWrap);
         }
+        frag.appendChild(node);
       }
+      if (isPrepend) messagesEl.prepend(frag); else messagesEl.appendChild(frag);
     }
     function renderMsg(c,isChild=false){
-      const wrap=document.createElement("div"); wrap.className="msg";
+      const cid = c._id || c.id;
+      const likeCount = Array.isArray(c.like) ? c.like.length : (typeof c.like==='number'?c.like:0);
+      const didILike = Array.isArray(c.like) && TK_TOKEN ? c.like.includes(TK_TOKEN) : false;
+
+      const wrap=document.createElement("div"); wrap.className="msg"; wrap.dataset.cid = cid;
+
       const avatar=document.createElement("div"); avatar.className="avatar";
       if (c.avatar){ const img=new Image(); img.src=c.avatar; img.alt=c.nick||"avatar"; avatar.appendChild(img); }
       else { avatar.textContent = initialOf(c.nick); }
@@ -380,10 +449,25 @@
       meta.append(nick,time);
 
       const content=document.createElement("div"); content.className="content";
-      // Server sanitizes HTML (XSS). We display as-is to render images/formatting.
       content.innerHTML = c.comment || "";
 
-      bubble.append(meta,content);
+      const actions=document.createElement("div"); actions.className="actions";
+      const likeBtn=document.createElement("span");
+      likeBtn.className="action" + (didILike?" liked":"");
+      likeBtn.dataset.action="like";
+      likeBtn.textContent= didILike ? "♥ Liked" : "♡ Like";
+
+      const likes=document.createElement("span"); likes.className="likes";
+      likes.textContent = likeCount>0 ? `${likeCount} like${likeCount>1?"s":""}` : "0 likes";
+
+      const replyBtn=document.createElement("span");
+      replyBtn.className="action";
+      replyBtn.dataset.action="reply";
+      replyBtn.textContent="↩ Reply";
+
+      actions.append(likeBtn, likes, replyBtn);
+
+      bubble.append(meta,content,actions);
       wrap.append(avatar,bubble);
       return wrap;
     }
@@ -404,7 +488,24 @@
       const pos=start+text.length; el.setSelectionRange(pos,pos); el.focus();
     }
 
-    // Wire up
+    function setReplyTarget(commentEl){
+      const cid = commentEl?.dataset?.cid;
+      if (!cid) return;
+      // Try to read basic info from DOM for label
+      const who = commentEl.querySelector('.nick')?.textContent || "someone";
+      replyTarget = {_id: cid, rid: "", nick: who};
+      replyName.textContent = who;
+      replyTo.style.display = "inline-flex";
+      // Focus composer
+      textEl.focus();
+    }
+    function clearReplyTarget(){
+      replyTarget = null;
+      replyName.textContent = "";
+      replyTo.style.display = "none";
+    }
+
+    // Events
     btnSend.addEventListener("click", sendMessage);
     btnAttach.addEventListener("click", attachImage);
     loadMoreBtn.addEventListener("click", loadOlder);
@@ -420,6 +521,25 @@
       const sizeMb=(f.size/1024/1024).toFixed(2);
       fileInfo.textContent = `${f.name} · ${sizeMb} MB`;
     });
+    replyCancel.addEventListener("click", clearReplyTarget);
+
+    // Delegate Like/Reply clicks
+    messagesEl.addEventListener("click", (e)=>{
+      const btn = e.target.closest('[data-action]');
+      if (!btn) return;
+      const action = btn.dataset.action;
+      const card = e.target.closest('.msg');
+      if (!card) return;
+      const cid = card.dataset.cid;
+      if (!cid) return;
+
+      if (action === 'like'){
+        toggleLike(cid);
+      } else if (action === 'reply'){
+        setReplyTarget(card);
+      }
+    });
+
     // drag & drop onto textarea
     textEl.addEventListener("dragover", e=>{ e.preventDefault(); });
     textEl.addEventListener("drop", async e=>{
