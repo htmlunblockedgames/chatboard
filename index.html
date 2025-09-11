@@ -4,133 +4,370 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Chatboard</title>
-
-  <script src="https://cdn.jsdelivr.net/npm/twikoo@1.6.40/dist/twikoo.all.min.js"></script>
-
   <style>
-    body{margin:0;background:#0b1021;color:#eaf0ff;font:14px/1.6 system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial,sans-serif}
-    .wrap{max-width:900px;margin:32px auto;padding:0 16px}
-    h1{margin:0 0 16px;font-size:22px;font-weight:700}
-    .card{background:rgba(22,28,60,.76);border:1px solid rgba(140,160,255,.14);border-radius:14px;box-shadow:0 10px 30px rgba(5,10,30,.35),inset 0 1px 0 rgba(255,255,255,.04);padding:14px}
-    a{color:#7aa2ff}
-    /* Hide email & website in Twikoo */
-    .twikoo input[type="email"], .twikoo input[type="url"]{display:none!important}
-    .twikoo .el-form-item:has(input[type="email"]),
-    .twikoo .el-form-item:has(input[type="url"]){display:none!important}
-
-    /* Uploader */
-    .uploader{display:flex;gap:10px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
-    .uploader input[type="file"]{display:block}
-    .btn{appearance:none;border:1px solid rgba(140,160,255,.25);background:#111733;color:#eaf0ff;border-radius:10px;padding:8px 12px;cursor:pointer}
-    .btn[disabled]{opacity:.6;cursor:not-allowed}
-    #upStatus{font-size:12px;opacity:.8}
+    :root {
+      --bg:#0b1021; --panel:#121735; --muted:#7c86b2; --text:#e7eaf6; --accent:#7aa2ff; --danger:#ff6b6b;
+      --border:#1d2450;
+    }
+    * { box-sizing:border-box }
+    body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; background:var(--bg); color:var(--text); }
+    header { padding:18px 16px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; }
+    header h1 { margin:0; font-size:18px; letter-spacing:.3px }
+    .container { max-width:920px; margin:0 auto; padding:16px; display:grid; gap:16px; }
+    .panel { background:var(--panel); border:1px solid var(--border); border-radius:16px; }
+    #messages { padding:12px; display:flex; flex-direction:column; gap:10px; min-height:40vh; }
+    .msg { display:flex; gap:10px; padding:10px 12px; border:1px solid var(--border); border-radius:12px; background:rgba(255,255,255,.02) }
+    .avatar { width:38px; height:38px; border-radius:50%; background:#2a3164; display:flex; align-items:center; justify-content:center; font-weight:700; color:#c9d3ff; flex:0 0 38px; overflow:hidden }
+    .avatar img { width:100%; height:100%; object-fit:cover }
+    .bubble { flex:1; min-width:0 }
+    .meta { font-size:12px; color:var(--muted); display:flex; gap:8px; align-items:center; }
+    .nick { color:#cfe0ff; font-weight:600 }
+    .content { margin-top:6px; line-height:1.5; word-wrap:break-word }
+    .content img { max-width:420px; border-radius:10px; border:1px solid var(--border); display:block; margin:6px 0 }
+    .children { margin-top:8px; padding-left:46px; display:flex; flex-direction:column; gap:8px }
+    #composer { padding:12px; display:grid; gap:10px }
+    .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap }
+    input[type="text"], textarea, input[type="url"] {
+      width:100%; padding:10px 12px; border-radius:10px; border:1px solid var(--border); background:#0f1440; color:var(--text);
+    }
+    textarea { min-height:100px; resize:vertical }
+    button { padding:10px 12px; border-radius:10px; border:1px solid var(--border); background:#1a235a; color:#fff; cursor:pointer }
+    button.primary { background:linear-gradient(180deg,#3b63ff,#2748cf) }
+    button:disabled { opacity:.6; cursor:not-allowed }
+    .hint { color:var(--muted); font-size:12px }
+    #status { padding:10px 12px; border-top:1px solid var(--border); color:var(--muted); font-size:12px }
+    #loadMore { margin:10px auto 14px; display:block }
+    .row-slim { gap:6px }
+    a { color:var(--accent) }
+    .danger { color:var(--danger) }
+    .pill { font-size:11px; color:#9fb4ff; border:1px solid var(--border); background:#0f1440; padding:3px 8px; border-radius:999px }
   </style>
 </head>
 <body>
-  <div class="wrap">
+  <header>
     <h1>Chatboard</h1>
-    <div class="card">
-      <!-- Custom image uploader (reverted working method) -->
-      <div class="uploader">
-        <input id="imgFile" type="file" accept="image/*" />
-        <button id="btnUpload" class="btn">Upload image</button>
-        <span id="upStatus"></span>
+    <div class="pill">Connected: <span id="conn">checking…</span></div>
+  </header>
+
+  <main class="container">
+    <section class="panel">
+      <div id="messages"></div>
+      <button id="loadMore" class="primary" style="display:none">Load older</button>
+    </section>
+
+    <section id="composer" class="panel">
+      <div class="row">
+        <input id="nick" type="text" placeholder="Nickname (optional, default Anonymous)" />
       </div>
-      <!-- Twikoo -->
-      <div id="tcomment"></div>
-    </div>
-  </div>
+      <div class="row">
+        <textarea id="text" placeholder="Type your message… You can also attach an image."></textarea>
+      </div>
+
+      <div class="row row-slim">
+        <input id="file" type="file" accept="image/*" />
+        <button id="btnAttach">Attach image</button>
+        <button id="btnSend" class="primary">Send</button>
+        <span class="hint">Images are uploaded via your Worker → IMGBB.</span>
+      </div>
+
+      <div id="status">Ready.</div>
+    </section>
+
+    <section class="panel" style="display:none" id="debugBox">
+      <pre id="debug" style="margin:0; padding:12px; overflow:auto; max-height:200px; white-space:pre-wrap"></pre>
+    </section>
+  </main>
 
   <script>
-    // ===== config (matches your working backend) =====
-    const ENV_ID = "https://twikoo-cloudflare.ertertertet07.workers.dev";
-    const PAGE_PATH = "/chatboard/";
-    // =================================================
+  ;(() => {
+    // ====== EDIT THESE IF YOU MOVE HOST/PATH ======
+    const WORKER_URL = "https://twikoo-cloudflare.ertertertet07.workers.dev";
+    const PAGE_URL_PATH = "/chatboard/"; // the path you consider this "page" in Twikoo
+    const PAGE_HREF = "https://htmlunblockedgames.github.io/chatboard/"; // full URL used for anti-spam/href
+    // ==============================================
 
-    // Init Twikoo
-    twikoo.init({ el: "#tcomment", envId: ENV_ID, path: PAGE_PATH, lang: "en" });
+    // DOM
+    const $ = id => document.getElementById(id);
+    const messagesEl = $("messages");
+    const loadMoreBtn = $("loadMore");
+    const nickEl = $("nick");
+    const textEl = $("text");
+    const fileEl = $("file");
+    const btnAttach = $("btnAttach");
+    const btnSend = $("btnSend");
+    const statusEl = $("status");
+    const connEl = $("conn");
+    const debug = $("debug");
+    const debugBox = $("debugBox");
 
-    // Hide email/url for browsers without :has()
-    function hideMailAndLink(){
-      document.querySelectorAll('.twikoo input[type="email"], .twikoo input[type="url"]').forEach(inp=>{
-        const box = inp.closest('.el-form-item') || inp.closest('.tk-input') || inp.parentElement;
-        if (box) box.style.display='none';
-        inp.style.display='none';
+    // State
+    let earliestMainCreated = null; // for pagination (COMMENT_GET before=)
+    let loading = false;
+
+    // Utils
+    const log = (...a) => { if (debug) { debugBox.style.display = ""; debug.textContent += a.join(" ") + "\n"; } };
+    const setStatus = (t, isError=false) => {
+      statusEl.textContent = t;
+      statusEl.style.color = isError ? "var(--danger)" : "var(--muted)";
+    };
+    const fmtTime = ts => new Date(ts).toLocaleString();
+    const initialOf = s => (s || "A").trim().charAt(0).toUpperCase();
+
+    // API
+    async function api(eventObj) {
+      const res = await fetch(WORKER_URL, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(eventObj)
       });
+      const json = await res.json().catch(() => ({}));
+      log("API", JSON.stringify(eventObj), "->", JSON.stringify(json));
+      return json;
     }
-    const mo = new MutationObserver(hideMailAndLink);
-    mo.observe(document.getElementById('tcomment'), { childList:true, subtree:true });
-    hideMailAndLink();
+
+    async function checkConnection() {
+      try {
+        const r = await api({ event: "GET_FUNC_VERSION" });
+        if (r && r.version) {
+          connEl.textContent = `v${r.version}`;
+          connEl.style.color = "#8ef5a9";
+        } else {
+          connEl.textContent = "ok";
+        }
+      } catch {
+        connEl.textContent = "failed";
+        connEl.style.color = "var(--danger)";
+      }
+    }
+
+    async function loadLatest() {
+      if (loading) return;
+      loading = true;
+      setStatus("Loading messages…");
+      try {
+        const r = await api({ event: "COMMENT_GET", url: PAGE_URL_PATH });
+        renderComments(r?.data || []);
+        // for pagination, save the smallest 'created' among top-level (rid == "")
+        const tops = (r?.data || []).filter(c => (c.rid || "") === "");
+        if (tops.length) {
+          earliestMainCreated = Math.min(...tops.map(c => c.created || Date.now()));
+          loadMoreBtn.style.display = "inline-block";
+        }
+        setStatus("Loaded.");
+      } catch (e) {
+        setStatus("Failed to load messages.", true);
+      } finally { loading = false; }
+    }
+
+    async function loadOlder() {
+      if (loading || !earliestMainCreated) return;
+      loading = true;
+      loadMoreBtn.disabled = true;
+      loadMoreBtn.textContent = "Loading…";
+      try {
+        const r = await api({
+          event: "COMMENT_GET",
+          url: PAGE_URL_PATH,
+          before: earliestMainCreated
+        });
+        const data = r?.data || [];
+        if (data.length) {
+          // prepend older top-levels (and their children)
+          prependComments(data);
+          const tops = data.filter(c => (c.rid || "") === "");
+          if (tops.length) {
+            earliestMainCreated = Math.min(earliestMainCreated, ...tops.map(c => c.created || Date.now()));
+          }
+        } else {
+          loadMoreBtn.textContent = "No more";
+          loadMoreBtn.disabled = true;
+        }
+      } catch (e) {
+        setStatus("Failed loading older.", true);
+      } finally {
+        loading = false;
+        if (!loadMoreBtn.disabled) loadMoreBtn.textContent = "Load older";
+      }
+    }
+
+    async function sendMessage() {
+      const nick = nickEl.value.trim() || "Anonymous";
+      const html = textEl.value.trim();
+      if (!html) {
+        setStatus("Type a message first.", true);
+        return;
+      }
+      btnSend.disabled = true;
+      btnSend.textContent = "Sending…";
+      setStatus("Sending…");
+      try {
+        const r = await api({
+          event: "COMMENT_SUBMIT",
+          nick,
+          comment: html,
+          url: PAGE_URL_PATH,
+          href: PAGE_HREF,
+          ua: navigator.userAgent
+        });
+        if (r && r.id) {
+          setStatus("Sent!");
+          textEl.value = "";
+          // reload latest to include the new one
+          await loadLatest();
+        } else {
+          throw new Error(r?.message || "Unknown error");
+        }
+      } catch (e) {
+        setStatus("Send failed: " + e.message, true);
+      } finally {
+        btnSend.disabled = false;
+        btnSend.textContent = "Send";
+      }
+    }
+
+    async function attachImage() {
+      const f = fileEl.files && fileEl.files[0];
+      if (!f) { setStatus("Choose an image file first.", true); return; }
+      btnAttach.disabled = true;
+      btnAttach.textContent = "Uploading…";
+      setStatus("Uploading image…");
+      try {
+        const dataURL = await fileToDataURL(f);
+        const r = await api({ event: "UPLOAD_IMAGE", photo: dataURL });
+        if (r?.code === 0 && r?.data?.url) {
+          // insert <img> into textarea
+          const url = r.data.url;
+          insertAtCursor(textEl, `\n<img src="${url}" alt="">\n`);
+          setStatus("Image attached.");
+        } else {
+          throw new Error(r?.err || r?.message || "Upload failed");
+        }
+      } catch (e) {
+        setStatus("Image upload failed: " + e.message, true);
+      } finally {
+        btnAttach.disabled = false;
+        btnAttach.textContent = "Attach image";
+        // clear selection so same file can be chosen again
+        fileEl.value = "";
+      }
+    }
+
+    // Rendering
+    function renderComments(list) {
+      messagesEl.innerHTML = "";
+      appendComments(list);
+    }
+
+    function appendComments(list) {
+      const tops = list.filter(c => (c.rid || "") === "");
+      for (const c of tops) {
+        messagesEl.appendChild(renderMsg(c));
+        if (Array.isArray(c.children)) {
+          const childrenWrap = document.createElement("div");
+          childrenWrap.className = "children";
+          for (const ch of c.children) {
+            childrenWrap.appendChild(renderMsg(ch, true));
+          }
+          messagesEl.lastElementChild.appendChild(childrenWrap);
+        }
+      }
+    }
+
+    function prependComments(list) {
+      const frag = document.createDocumentFragment();
+      const tops = list.filter(c => (c.rid || "") === "");
+      for (const c of tops) {
+        const node = renderMsg(c);
+        if (Array.isArray(c.children) && c.children.length) {
+          const childrenWrap = document.createElement("div");
+          childrenWrap.className = "children";
+          for (const ch of c.children) childrenWrap.appendChild(renderMsg(ch, true));
+          node.appendChild(childrenWrap);
+        }
+        frag.appendChild(node);
+      }
+      messagesEl.prepend(frag);
+    }
+
+    function renderMsg(c, isChild=false) {
+      const wrap = document.createElement("div");
+      wrap.className = "msg";
+
+      const avatar = document.createElement("div");
+      avatar.className = "avatar";
+      if (c.avatar) {
+        const img = document.createElement("img");
+        img.src = c.avatar;
+        img.alt = c.nick || "avatar";
+        avatar.appendChild(img);
+      } else {
+        avatar.textContent = initialOf(c.nick);
+      }
+
+      const bubble = document.createElement("div");
+      bubble.className = "bubble";
+
+      const meta = document.createElement("div");
+      meta.className = "meta";
+      const nick = document.createElement("span");
+      nick.className = "nick";
+      nick.textContent = c.nick || "Anonymous";
+      const time = document.createElement("span");
+      time.textContent = fmtTime(c.created || Date.now());
+      meta.appendChild(nick);
+      meta.appendChild(time);
+
+      const content = document.createElement("div");
+      content.className = "content";
+      // Server already runs XSS sanitize; trust markup here.
+      content.innerHTML = c.comment || "";
+
+      bubble.appendChild(meta);
+      bubble.appendChild(content);
+
+      wrap.appendChild(avatar);
+      wrap.appendChild(bubble);
+      return wrap;
+    }
 
     // Helpers
-    function getTwikooTextarea(){
-      return document.querySelector('.twikoo .el-textarea__inner');
-    }
-    function appendToComment(text){
-      const ta = getTwikooTextarea();
-      if (!ta) return false;
-      const atEnd = (ta.value && !ta.value.endsWith('\n')) ? '\n' : '';
-      ta.value = (ta.value || '') + atEnd + text + '\n';
-      ta.dispatchEvent(new Event('input', { bubbles:true })); // trigger Twikoo reactivity
-      return true;
-    }
-    function fileToDataURL(file){
-      return new Promise((resolve, reject)=>{
+    function fileToDataURL(file) {
+      return new Promise((resolve, reject) => {
         const fr = new FileReader();
+        fr.onerror = () => reject(fr.error || new Error("FileReader error"));
         fr.onload = () => resolve(fr.result);
-        fr.onerror = reject;
         fr.readAsDataURL(file);
       });
     }
 
-    // Upload flow -> Worker UPLOAD_IMAGE -> insert markdown into Twikoo
-    const imgInput = document.getElementById('imgFile');
-    const btn = document.getElementById('btnUpload');
-    const statusEl = document.getElementById('upStatus');
-
-    async function uploadSelected(){
-      statusEl.textContent = '';
-      if (!imgInput.files || !imgInput.files[0]){
-        statusEl.textContent = 'Pick an image first.';
-        return;
-      }
-      const file = imgInput.files[0];
-      if (file.size > 8 * 1024 * 1024){ // 8MB soft limit
-        statusEl.textContent = 'Image too large.';
-        return;
-      }
-
-      btn.disabled = true;
-      statusEl.textContent = 'Uploading...';
-
-      try{
-        const dataUrl = await fileToDataURL(file);
-        const resp = await fetch(ENV_ID, {
-          method: 'POST',
-          headers: { 'content-type':'application/json' },
-          body: JSON.stringify({ event:'UPLOAD_IMAGE', photo:dataUrl })
-        });
-        const json = await resp.json();
-
-        if (json && json.code === 0 && json.data && json.data.url){
-          const ok = appendToComment(`![](${json.data.url})`);
-          statusEl.textContent = ok ? 'Inserted image link.' : `Uploaded: ${json.data.url} (paste into comment)`;
-          if (!ok){
-            // Copy to clipboard as fallback
-            try{ await navigator.clipboard.writeText(json.data.url); } catch {}
-          }
-          imgInput.value = '';
-        } else {
-          statusEl.textContent = (json && (json.err || json.message)) ? json.err || json.message : 'Upload failed.';
-        }
-      } catch(e){
-        statusEl.textContent = 'Network error.';
-      } finally {
-        btn.disabled = false;
-      }
+    function insertAtCursor(el, text) {
+      const [start, end] = [el.selectionStart ?? el.value.length, el.selectionEnd ?? el.value.length];
+      el.value = el.value.slice(0, start) + text + el.value.slice(end);
+      const pos = start + text.length;
+      el.setSelectionRange(pos, pos);
+      el.focus();
     }
 
-    btn.addEventListener('click', uploadSelected);
+    // Wire up
+    btnSend.addEventListener("click", sendMessage);
+    btnAttach.addEventListener("click", attachImage);
+    loadMoreBtn.addEventListener("click", loadOlder);
+
+    // Drag & drop support
+    textEl.addEventListener("dragover", e => { e.preventDefault(); });
+    textEl.addEventListener("drop", async e => {
+      e.preventDefault();
+      const f = e.dataTransfer?.files?.[0];
+      if (f && f.type.startsWith("image/")) {
+        fileEl.files = e.dataTransfer.files;
+        await attachImage();
+      }
+    });
+
+    // Init
+    checkConnection();
+    loadLatest();
+  })();
   </script>
 </body>
 </html>
