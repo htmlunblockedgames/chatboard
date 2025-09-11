@@ -3,44 +3,53 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Chatboard</title>
+  <title>Poly Track Chatboard</title>
   <style>
-    :root { --bg:#0b1021; --panel:#121735; --muted:#7c86b2; --text:#e7eaf6; --accent:#7aa2ff; --danger:#ff6b6b; --ok:#47dca0; --border:#1d2450; }
-    * { box-sizing:border-box }
-    body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; background:var(--bg); color:var(--text); }
-    header { padding:18px 16px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; }
-    header h1 { margin:0; font-size:18px; letter-spacing:.3px }
-    .status-pill { font-size:11px; color:#9fb4ff; border:1px solid var(--border); background:#0f1440; padding:3px 8px; border-radius:999px }
-    .container { max-width:920px; margin:0 auto; padding:16px; display:grid; gap:16px; }
-    .panel { background:var(--panel); border:1px solid var(--border); border-radius:16px; }
-    #messages { padding:12px; display:flex; flex-direction:column; gap:10px; min-height:40vh; }
-    .msg { display:flex; gap:10px; padding:10px 12px; border:1px solid var(--border); border-radius:12px; background:rgba(255,255,255,.02) }
-    .avatar { width:38px; height:38px; border-radius:50%; background:#2a3164; display:flex; align-items:center; justify-content:center; font-weight:700; color:#c9d3ff; flex:0 0 38px; overflow:hidden }
-    .avatar img { width:100%; height:100%; object-fit:cover }
-    .bubble { flex:1; min-width:0 }
-    .meta { font-size:12px; color:var(--muted); display:flex; gap:8px; align-items:center; }
-    .nick { color:#cfe0ff; font-weight:600 }
-    .content { margin-top:6px; line-height:1.5; word-wrap:break-word }
-    .content img { max-width:420px; border-radius:10px; border:1px solid var(--border); display:block; margin:6px 0 }
-    .children { margin-top:8px; padding-left:46px; display:flex; flex-direction:column; gap:8px }
-    #composer { padding:12px; display:grid; gap:10px }
-    .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap }
-    input[type="text"], textarea { width:100%; padding:10px 12px; border-radius:10px; border:1px solid var(--border); background:#0f1440; color:var(--text); }
-    textarea { min-height:100px; resize:vertical }
-    button { padding:10px 12px; border-radius:10px; border:1px solid var(--border); background:#1a235a; color:#fff; cursor:pointer }
-    button.primary { background:linear-gradient(180deg,#3b63ff,#2748cf) }
-    button:disabled { opacity:.6; cursor:not-allowed }
-    #status { padding:10px 12px; border-top:1px solid var(--border); color:var(--muted); font-size:12px }
-    #loadMore { margin:10px auto 14px; display:block }
-    .row-slim { gap:6px }
-    #file { display:none }
-    .file-note { font-size:12px; color:var(--muted) }
+    :root{
+      --bg:#0b1021;--panel:#121735;--muted:#8b96c6;--text:#e7eaf6;--accent:#7aa2ff;--danger:#ff6b6b;--ok:#28d07f;--border:#1d2450;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:var(--text)}
+    header{padding:18px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+    header h1{margin:0;font-size:18px;letter-spacing:.3px}
+    .pill{font-size:12px;color:#cfe0ff;border:1px solid var(--border);background:#0f1440;padding:6px 10px;border-radius:999px}
+    .ok{color:var(--ok)} .bad{color:var(--danger)}
+    .container{max-width:920px;margin:0 auto;padding:16px;display:grid;gap:16px}
+    .panel{background:var(--panel);border:1px solid var(--border);border-radius:16px}
+    /* composer */
+    #composer{padding:12px;display:grid;gap:10px}
+    .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+    input[type="text"],textarea{width:100%;padding:10px 12px;border-radius:10px;border:1px solid var(--border);background:#0f1440;color:var(--text)}
+    textarea{min-height:100px;resize:vertical}
+    button,.btn{padding:10px 12px;border-radius:10px;border:1px solid var(--border);background:#1a235a;color:#fff;cursor:pointer;display:inline-flex;align-items:center;gap:8px}
+    button.primary{background:linear-gradient(180deg,#3b63ff,#2748cf)}
+    button:disabled{opacity:.6;cursor:not-allowed}
+    .file-wrap{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+    .file-hidden{display:none}
+    .file-caption{font-size:12px;color:var(--muted)}
+    #status{display:none;margin-top:4px;color:var(--muted);font-size:12px}
+    /* messages */
+    #messagesWrap{padding:12px 12px 4px}
+    #messages{display:flex;flex-direction:column;gap:10px;min-height:38vh}
+    .msg{display:flex;gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:12px;background:rgba(255,255,255,.02)}
+    .avatar{width:38px;height:38px;border-radius:50%;background:#2a3164;display:flex;align-items:center;justify-content:center;font-weight:700;color:#c9d3ff;flex:0 0 38px;overflow:hidden}
+    .avatar img{width:100%;height:100%;object-fit:cover}
+    .bubble{flex:1;min-width:0}
+    .meta{font-size:12px;color:var(--muted);display:flex;gap:8px;align-items:center}
+    .nick{color:#cfe0ff;font-weight:600}
+    .content{margin-top:6px;line-height:1.5;word-wrap:break-word}
+    .content img{max-width:420px;border-radius:10px;border:1px solid var(--border);display:block;margin:6px 0}
+    .children{margin-top:8px;padding-left:46px;display:flex;flex-direction:column;gap:8px}
+    /* load more */
+    #loadMoreWrap{padding:0 12px 14px}
+    #loadMore{display:block;margin:10px auto 6px}
+    a{color:var(--accent)}
   </style>
 </head>
 <body>
   <header>
-    <h1>Chatboard</h1>
-    <div class="status-pill">Status: <span id="conn">Checking…</span></div>
+    <h1>Poly Track Chatboard</h1>
+    <div class="pill">Status: <span id="conn">Checking…</span></div>
   </header>
 
   <main class="container">
@@ -52,300 +61,261 @@
       <div class="row">
         <textarea id="text" placeholder="Type your message… You can also attach an image."></textarea>
       </div>
-
-      <div class="row row-slim">
-        <input id="file" type="file" accept="image/*" />
-        <button id="btnFile" type="button">Choose image</button>
-        <span id="fileName" class="file-note"></span>
-        <button id="btnAttach" type="button">Attach image</button>
-        <button id="btnSend" class="primary" type="button">Send</button>
+      <div class="row file-wrap">
+        <input id="file" type="file" accept="image/*" class="file-hidden" />
+        <label for="file" id="btnFile" class="btn">Choose image</label>
+        <span id="fileCaption" class="file-caption"></span>
+        <button id="btnAttach">Attach image</button>
+        <button id="btnSend" class="primary">Send</button>
       </div>
-
-      <div id="status">Ready.</div>
+      <div id="status"></div>
     </section>
 
-    <!-- Comments -->
+    <!-- Messages -->
     <section class="panel">
-      <div id="messages"></div>
-      <button id="loadMore" class="primary" style="display:none">Load older</button>
+      <div id="messagesWrap">
+        <div id="messages"></div>
+      </div>
+      <div id="loadMoreWrap">
+        <button id="loadMore" class="primary" style="display:none">Load older</button>
+      </div>
     </section>
   </main>
 
   <script>
   ;(() => {
-    // ====== EDIT THESE IF YOU MOVE HOST/PATH ======
-    const WORKER_URL   = "https://twikoo-cloudflare.ertertertet07.workers.dev";
-    const PAGE_URL_PATH= "/chatboard/";
-    const PAGE_HREF    = "https://htmlunblockedgames.github.io/chatboard/";
-    // ==============================================
+    // ====== CONFIG ======
+    const WORKER_URL = "https://twikoo-cloudflare.ertertertet07.workers.dev";
+    const PAGE_URL_PATH = "/chatboard/";
+    const PAGE_HREF = "https://htmlunblockedgames.github.io/chatboard/";
+    // ====================
 
     // DOM
     const $ = id => document.getElementById(id);
     const messagesEl = $("messages");
-    const loadMoreBtn= $("loadMore");
-    const nickEl     = $("nick");
-    const textEl     = $("text");
-    const fileEl     = $("file");
-    const btnFile    = $("btnFile");
-    const btnAttach  = $("btnAttach");
-    const btnSend    = $("btnSend");
-    const statusEl   = $("status");
-    const connEl     = $("conn");
-    const fileNameEl = $("fileName");
+    const loadMoreBtn = $("loadMore");
+    const nickEl = $("nick");
+    const textEl = $("text");
+    const fileEl = $("file");
+    const btnFile = $("btnFile");
+    const fileCaption = $("fileCaption");
+    const btnAttach = $("btnAttach");
+    const btnSend = $("btnSend");
+    const statusEl = $("status");
+    const connEl = $("conn");
 
     // State
-    let earliestMainCreated = null;           // for pagination (top-level only)
+    let earliestMainCreated = null;   // oldest top-level we've shown
+    let hasMore = false;              // server's "more" flag
     let loading = false;
-    const seenTopIds = new Set();             // dedupe top-levels
+    const shown = new Set();          // _id dedupe
 
-    // Utils
-    const setStatus = (t, isError=false) => { statusEl.textContent = t; statusEl.style.color = isError ? "var(--danger)" : "var(--muted)"; };
+    // Helpers
+    const showStatus = (t, isError=false) => {
+      statusEl.textContent = t;
+      statusEl.style.display = "block";
+      statusEl.style.color = isError ? "var(--danger)" : "var(--muted)";
+    };
+    const hideStatus = () => { statusEl.style.display = "none"; };
     const fmtTime = ts => new Date(ts).toLocaleString();
     const initialOf = s => (s || "A").trim().charAt(0).toUpperCase();
-    const topId = c => c.id || c._id || `${c.created || ""}-${c.nick || ""}`;
-    const isTopLevel = c => (c.rid || "") === "";
-    const notPinned = c => c.top === 0 || c.top === false || typeof c.top === "undefined";
 
-    // API
     async function api(eventObj) {
-      const res = await fetch(WORKER_URL, { method: "POST", headers: { "content-type":"application/json" }, body: JSON.stringify(eventObj) });
-      return res.json().catch(() => ({}));
+      const res = await fetch(WORKER_URL, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(eventObj)
+      });
+      return res.json();
     }
 
     async function checkConnection() {
       try {
-        await api({ event: "GET_FUNC_VERSION" });
-        connEl.textContent = "Online";
-        connEl.style.color = "var(--ok)";
+        const r = await api({ event: "GET_FUNC_VERSION" });
+        if (r && r.version) {
+          connEl.textContent = "Online";
+          connEl.className = "ok";
+        } else {
+          connEl.textContent = "Offline";
+          connEl.className = "bad";
+        }
       } catch {
         connEl.textContent = "Offline";
-        connEl.style.color = "var(--danger)";
+        connEl.className = "bad";
       }
     }
 
+    // INITIAL LOAD (newest first)
     async function loadLatest() {
-      if (loading) return;
-      loading = true;
-      setStatus("Loading messages…");
+      if (loading) return; loading = true;
       try {
-        const r = await api({ event:"COMMENT_GET", url: PAGE_URL_PATH });
-        renderComments(r?.data || []);
-        // track earliest MAIN (exclude pinned if possible)
-        const mains = (r?.data || []).filter(c => isTopLevel(c) && notPinned(c));
-        const pool  = mains.length ? mains : (r?.data || []).filter(isTopLevel);
-        if (pool.length) {
-          earliestMainCreated = Math.min(...pool.map(c => c.created || Date.now()));
+        const r = await api({ event: "COMMENT_GET", url: PAGE_URL_PATH });
+        const data = r?.data || [];
+        hasMore = !!r?.more;
+        renderInitial(data);
+        // compute oldest top-level created in this batch
+        const tops = data.filter(c => (c.rid || "") === "");
+        if (tops.length) {
+          earliestMainCreated = Math.min(...tops.map(c => c.created || Date.now()));
         }
-        // show/hide loadMore from server flag when available
-        loadMoreBtn.style.display = r?.more ? "inline-block" : "none";
-        loadMoreBtn.disabled = !r?.more;
-        loadMoreBtn.textContent = r?.more ? "Load older" : "No more";
-        setStatus("Loaded.");
+        loadMoreBtn.style.display = hasMore ? "block" : "none";
+        if (!hasMore) { loadMoreBtn.textContent = "No more"; loadMoreBtn.disabled = true; }
+        hideStatus();
       } catch {
-        setStatus("Failed to load messages.", true);
+        showStatus("Failed to load messages.", true);
       } finally { loading = false; }
     }
 
+    // PAGINATION (append older to the bottom, use server's `more`)
     async function loadOlder() {
-      if (loading || !earliestMainCreated) return;
+      if (loading || !hasMore || !earliestMainCreated) return;
       loading = true;
-      loadMoreBtn.disabled = true;
-      loadMoreBtn.textContent = "Loading…";
+      const prevText = loadMoreBtn.textContent;
+      loadMoreBtn.disabled = true; loadMoreBtn.textContent = "Loading…";
       try {
-        const r = await api({ event:"COMMENT_GET", url: PAGE_URL_PATH, before: earliestMainCreated });
+        const r = await api({ event: "COMMENT_GET", url: PAGE_URL_PATH, before: earliestMainCreated });
         const data = r?.data || [];
+        hasMore = !!r?.more;
         if (data.length) {
-          prependComments(data); // will dedupe
-          const mains = data.filter(c => isTopLevel(c) && notPinned(c));
-          if (mains.length) {
-            const minCreated = Math.min(...mains.map(c => c.created || earliestMainCreated));
+          appendOlder(data); // keep overall newest->oldest order
+          const tops = data.filter(c => (c.rid || "") === "");
+          if (tops.length) {
+            const minCreated = Math.min(...tops.map(c => c.created || Date.now()));
             earliestMainCreated = Math.min(earliestMainCreated, minCreated);
           }
         }
-        // update button based on 'more'
-        if (r?.more) {
-          loadMoreBtn.disabled = false;
-          loadMoreBtn.textContent = "Load older";
-        } else {
-          loadMoreBtn.textContent = "No more";
-          loadMoreBtn.disabled = true;
-        }
+        if (!hasMore) { loadMoreBtn.textContent = "No more"; loadMoreBtn.disabled = true; }
+        else { loadMoreBtn.textContent = prevText; loadMoreBtn.disabled = false; }
       } catch {
-        setStatus("Failed loading older.", true);
-        loadMoreBtn.disabled = false;
-        loadMoreBtn.textContent = "Load older";
+        loadMoreBtn.textContent = prevText; loadMoreBtn.disabled = false;
+        showStatus("Failed loading older.", true);
       } finally { loading = false; }
     }
 
     async function sendMessage() {
       const nick = nickEl.value.trim() || "Anonymous";
       const html = textEl.value.trim();
-      if (!html) { setStatus("Type a message first.", true); return; }
-      btnSend.disabled = true; btnSend.textContent = "Sending…"; setStatus("Sending…");
+      if (!html) { showStatus("Type a message first.", true); return; }
+      btnSend.disabled = true; btnSend.textContent = "Sending…";
+      showStatus("Sending…");
       try {
-        const r = await api({ event:"COMMENT_SUBMIT", nick, comment: html, url: PAGE_URL_PATH, href: PAGE_HREF, ua: navigator.userAgent });
+        const r = await api({
+          event: "COMMENT_SUBMIT",
+          nick,
+          comment: html,
+          url: PAGE_URL_PATH,
+          href: PAGE_HREF,
+          ua: navigator.userAgent
+        });
         if (r && r.id) {
-          setStatus("Sent!");
           textEl.value = "";
+          hideStatus();
+          // reload newest page to include the new message and reset pagination anchor
           await loadLatest();
         } else {
-          const msg = translateError(r?.message || "Unknown error");
-          throw new Error(msg);
+          throw new Error(r?.message || "Unknown error");
         }
       } catch (e) {
-        setStatus("Send failed: " + translateError(e.message), true);
+        const msg = String(e.message || "").includes("发言频率过高")
+          ? "You're sending messages too quickly. Please slow down."
+          : "Send failed: " + (e.message || "Unknown error");
+        showStatus(msg, true);
       } finally {
         btnSend.disabled = false; btnSend.textContent = "Send";
       }
     }
 
-    function translateError(m) {
-      if (!m) return "Something went wrong.";
-      if (m.includes("发言频率过高")) return "You're sending too fast. Please slow down.";
-      if (m.includes("评论太火爆"))   return "Chat is very busy right now. Try again in a moment.";
-      if (m.toLowerCase().includes("captcha")) return "Captcha verification failed.";
-      return m;
-    }
-
-    function chooseFile() { fileEl.click(); }
-    fileEl.addEventListener("change", () => {
-      const f = fileEl.files?.[0];
-      fileNameEl.textContent = f ? `Selected: ${f.name}` : "";
-    });
-
     async function attachImage() {
       const f = fileEl.files && fileEl.files[0];
-      if (!f) { setStatus("Choose an image file first.", true); return; }
-      btnAttach.disabled = true; btnAttach.textContent = "Uploading…"; setStatus("Uploading image…");
+      if (!f) { showStatus("Choose an image file first.", true); return; }
+      btnAttach.disabled = true; btnAttach.textContent = "Uploading…";
+      showStatus("Uploading image…");
       try {
         const dataURL = await fileToDataURL(f);
-        const r = await api({ event:"UPLOAD_IMAGE", photo: dataURL });
+        const r = await api({ event: "UPLOAD_IMAGE", photo: dataURL });
         if (r?.code === 0 && r?.data?.url) {
           insertAtCursor(textEl, `\n<img src="${r.data.url}" alt="">\n`);
-          setStatus(`Image attached: ${f.name}`);
-          fileEl.value = ""; fileNameEl.textContent = "";
+          hideStatus();
+          fileCaption.textContent = "";
+          fileEl.value = "";
         } else {
           throw new Error(r?.err || r?.message || "Upload failed");
         }
       } catch (e) {
-        setStatus("Image upload failed: " + e.message, true);
+        showStatus("Image upload failed: " + e.message, true);
       } finally {
         btnAttach.disabled = false; btnAttach.textContent = "Attach image";
       }
     }
 
-    // Rendering
-    function renderComments(list) {
-      seenTopIds.clear();
+    // RENDERING
+    function renderInitial(list){
+      shown.clear();
       messagesEl.innerHTML = "";
-      appendComments(list);
+      // Twikoo returns newest first; render in order (top->down = newest->older)
+      addBatchToEnd(list);
     }
-
-    function appendComments(list) {
-      const tops = list.filter(isTopLevel);
-      for (const c of tops) {
-        if (seenTopIds.has(topId(c))) continue;
-        seenTopIds.add(topId(c));
-        messagesEl.appendChild(renderMsg(c));
-        if (Array.isArray(c.children) && c.children.length) {
-          const childrenWrap = document.createElement("div");
-          childrenWrap.className = "children";
-          for (const ch of c.children) childrenWrap.appendChild(renderMsg(ch, true));
-          messagesEl.lastElementChild.appendChild(childrenWrap);
-        }
-      }
+    function appendOlder(list){
+      // older page also comes newest->older (but all older than current bottom). Append as-is.
+      addBatchToEnd(list);
     }
-
-    function prependComments(list) {
-      const frag = document.createDocumentFragment();
-      const tops = list.filter(isTopLevel);
+    function addBatchToEnd(list){
+      const tops = list.filter(c => (c.rid || "") === "");
       for (const c of tops) {
-        const id = topId(c);
-        if (seenTopIds.has(id)) continue;
-        seenTopIds.add(id);
+        if (shown.has(c._id)) continue;
+        shown.add(c._id);
         const node = renderMsg(c);
-        if (Array.isArray(c.children) && c.children.length) {
-          const childrenWrap = document.createElement("div");
-          childrenWrap.className = "children";
-          for (const ch of c.children) childrenWrap.appendChild(renderMsg(ch, true));
-          node.appendChild(childrenWrap);
+        // children (replies) if present
+        if (Array.isArray(c.children) && c.children.length){
+          const wrap = document.createElement("div");
+          wrap.className = "children";
+          for (const ch of c.children){
+            if (shown.has(ch._id)) continue;
+            shown.add(ch._id);
+            wrap.appendChild(renderMsg(ch,true));
+          }
+          node.appendChild(wrap);
         }
-        frag.appendChild(node);
+        messagesEl.appendChild(node);
       }
-      messagesEl.prepend(frag);
     }
-
-    function renderMsg(c) {
-      const wrap = document.createElement("div");
-      wrap.className = "msg";
-
-      const avatar = document.createElement("div");
-      avatar.className = "avatar";
-      if (c.avatar) {
-        const img = document.createElement("img");
-        img.src = c.avatar; img.alt = c.nick || "avatar";
-        avatar.appendChild(img);
-      } else {
-        avatar.textContent = initialOf(c.nick);
-      }
-
-      const bubble = document.createElement("div");
-      bubble.className = "bubble";
-
-      const meta = document.createElement("div");
-      meta.className = "meta";
-      const nick = document.createElement("span");
-      nick.className = "nick";
-      nick.textContent = c.nick || "Anonymous";
-      const time = document.createElement("span");
-      time.textContent = fmtTime(c.created || Date.now());
+    function renderMsg(c,isChild=false){
+      const wrap=document.createElement("div"); wrap.className="msg";
+      const avatar=document.createElement("div"); avatar.className="avatar";
+      if (c.avatar){ const img=document.createElement("img"); img.src=c.avatar; img.alt=c.nick||"avatar"; avatar.appendChild(img); }
+      else avatar.textContent=initialOf(c.nick);
+      const bubble=document.createElement("div"); bubble.className="bubble";
+      const meta=document.createElement("div"); meta.className="meta";
+      const nick=document.createElement("span"); nick.className="nick"; nick.textContent=c.nick||"Anonymous";
+      const time=document.createElement("span"); time.textContent=fmtTime(c.created||Date.now());
       meta.appendChild(nick); meta.appendChild(time);
-
-      const content = document.createElement("div");
-      content.className = "content";
-      content.innerHTML = c.comment || "";
-
-      bubble.appendChild(meta);
-      bubble.appendChild(content);
-      wrap.appendChild(avatar);
-      wrap.appendChild(bubble);
+      const content=document.createElement("div"); content.className="content"; content.innerHTML=c.comment||"";
+      bubble.appendChild(meta); bubble.appendChild(content);
+      wrap.appendChild(avatar); wrap.appendChild(bubble);
       return wrap;
     }
 
-    // Helpers
-    function fileToDataURL(file) {
-      return new Promise((resolve, reject) => {
-        const fr = new FileReader();
-        fr.onerror = () => reject(fr.error || new Error("FileReader error"));
-        fr.onload = () => resolve(fr.result);
-        fr.readAsDataURL(file);
-      });
-    }
-    function insertAtCursor(el, text) {
-      const [start, end] = [el.selectionStart ?? el.value.length, el.selectionEnd ?? el.value.length];
-      el.value = el.value.slice(0, start) + text + el.value.slice(end);
-      const pos = start + text.length; el.setSelectionRange(pos, pos); el.focus();
-    }
+    // UTIL
+    function fileToDataURL(file){return new Promise((res,rej)=>{const fr=new FileReader();fr.onerror=()=>rej(fr.error||new Error("FileReader error"));fr.onload=()=>res(fr.result);fr.readAsDataURL(file);});}
+    function insertAtCursor(el,text){const s=el.selectionStart??el.value.length,e=el.selectionEnd??el.value.length;el.value=el.value.slice(0,s)+text+el.value.slice(e);const p=s+text.length;el.setSelectionRange(p,p);el.focus();}
 
-    // Wire up
+    // EVENTS
     btnSend.addEventListener("click", sendMessage);
-    btnFile.addEventListener("click", chooseFile);
     btnAttach.addEventListener("click", attachImage);
     loadMoreBtn.addEventListener("click", loadOlder);
+    // styled file picker & caption
+    btnFile.addEventListener("keydown", e=>{ if(e.key==="Enter"||e.key===" ") fileEl.click(); });
+    fileEl.addEventListener("change", ()=>{ fileCaption.textContent = fileEl.files?.[0]?.name || ""; });
 
-    // Drag & drop support
-    textEl.addEventListener("dragover", e => { e.preventDefault(); });
-    textEl.addEventListener("drop", async e => {
+    // drag & drop
+    textEl.addEventListener("dragover", e=>e.preventDefault());
+    textEl.addEventListener("drop", async e=>{
       e.preventDefault();
-      const f = e.dataTransfer?.files?.[0];
-      if (f && f.type.startsWith("image/")) {
-        fileEl.files = e.dataTransfer.files;
-        fileNameEl.textContent = `Selected: ${f.name}`;
-        await attachImage();
-      }
+      const f=e.dataTransfer?.files?.[0];
+      if (f && f.type.startsWith("image/")){ fileEl.files=e.dataTransfer.files; fileCaption.textContent=f.name||""; await attachImage(); }
     });
 
-    // Init
+    // INIT
     checkConnection();
     loadLatest();
   })();
