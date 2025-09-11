@@ -5,28 +5,33 @@
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>Poly Track Chatboard</title>
   <style>
-    /* ---------- Purple (Google-Forms-ish) dark theme ---------- */
+    /* ---------- Light theme inspired by Google Forms ---------- */
     :root{
-      --bg:#1a1426;            /* page background */
-      --panel:#211a35;         /* card background */
-      --panel-2:#271f41;
-      --border:#3a2f5f;
-      --text:#ecedff;
-      --muted:#a8a2c7;
-      --accent:#a78bfa;        /* lavender */
-      --accent-2:#8b5cf6;      /* focus/hover */
-      --ok:#4ade80;            /* green */
-      --danger:#ff7b8a;
-      --inner:16px;            /* inner horizontal padding used by lists */
+      --bg:#f6f5fb;            /* page background */
+      --panel:#ffffff;         /* card background */
+      --panel-2:#faf9ff;
+      --border:#e8e6f3;
+      --text:#1f1f1f;
+      --muted:#6b6b82;
+      --accent:#6b4fd3;        /* primary purple */
+      --accent-2:#5a3bb5;      /* hover */
+      --ok:#0f9d58;            /* green */
+      --danger:#d93025;        /* red */
+      --inner:18px;            /* inner horizontal padding used by lists */
       --radius:16px;
+      --shadow:0 8px 20px rgba(26,24,46,.08);
     }
     *{box-sizing:border-box}
     html,body{height:100%}
     body{
       margin:0;
-      font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-      background: radial-gradient(1200px 600px at 80% -10%, #2b2351 0%, transparent 60%) , var(--bg);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+      background:
+        radial-gradient(900px 380px at 80% -10%, #efeaff 0%, transparent 60%),
+        var(--bg);
       color:var(--text);
+      -webkit-font-smoothing:antialiased;
+      -moz-osx-font-smoothing:grayscale;
       letter-spacing:.1px;
     }
 
@@ -35,15 +40,17 @@
       padding:18px 16px;
       border-bottom:1px solid var(--border);
       display:flex;align-items:center;justify-content:space-between;
-      background:linear-gradient(180deg,#2a2250,#20193b);
+      background:linear-gradient(180deg,#7656e6,#6b4fd3);
+      color:#fff;
     }
     header h1{margin:0;font-size:18px;font-weight:700}
     .status{
-      font-size:12px;padding:6px 12px;border:1px solid var(--border);
-      border-radius:999px;background:var(--panel-2);
+      font-size:12px;padding:6px 12px;border:1px solid rgba(255,255,255,.35);
+      border-radius:999px;background:rgba(255,255,255,.15);
+      backdrop-filter:saturate(130%) blur(4px);
     }
-    .status.ok{color:var(--ok)}
-    .status.bad{color:var(--danger)}
+    .status.ok{color:#b6ffd2;border-color:rgba(0,0,0,.08)}
+    .status.bad{color:#ffd1d1;border-color:rgba(0,0,0,.08)}
 
     /* ---------- Layout ---------- */
     .container{max-width:920px;margin:0 auto;padding:20px;display:grid;gap:18px}
@@ -51,7 +58,7 @@
       background:var(--panel);
       border:1px solid var(--border);
       border-radius:var(--radius);
-      box-shadow:0 10px 30px rgba(0,0,0,.25);
+      box-shadow:var(--shadow);
     }
 
     /* ---------- Composer ---------- */
@@ -60,24 +67,26 @@
     .row-slim{gap:8px}
     input[type="text"], textarea{
       width:100%;padding:12px 14px;border-radius:12px;border:1px solid var(--border);
-      background:linear-gradient(180deg,#1a1640,#141032);color:var(--text);
-      outline:none;transition:border-color .15s, box-shadow .15s;
+      background:var(--panel-2);color:var(--text);
+      outline:none;transition:border-color .15s, box-shadow .15s, background .2s;
     }
     input[type="text"]:focus, textarea:focus{
-      border-color:var(--accent); box-shadow:0 0 0 3px rgba(167,139,250,.15)
+      border-color:var(--accent); box-shadow:0 0 0 3px #6b4fd324;
+      background:#fff;
     }
     textarea{min-height:120px;resize:vertical;line-height:1.55}
 
     .btn{
       padding:10px 14px;border-radius:12px;border:1px solid var(--border);
-      background:#2a2361;color:#fff;cursor:pointer;
-      transition:transform .05s ease, background .15s, border-color .15s;
+      background:#ede9ff;color:#2b1e6a;cursor:pointer;
+      transition:transform .05s ease, background .15s, border-color .15s, color .15s;
+      font-weight:600;
     }
-    .btn:hover{background:#2f2770;border-color:#4a3b85}
+    .btn:hover{background:#e4ddff;border-color:#d5cff7}
     .btn:active{transform:translateY(1px)}
     .btn.primary{
       background:linear-gradient(180deg,var(--accent),var(--accent-2));
-      border-color:#5b46c9;
+      border-color:#4f36a9;color:#fff;
     }
     .btn.primary:hover{filter:brightness(1.03)}
     .btn:disabled{opacity:.6;cursor:not-allowed}
@@ -92,22 +101,22 @@
     #status{display:none;font-size:12px;color:var(--muted)}
 
     /* ---------- Messages ---------- */
-    #messages{padding:12px var(--inner);display:flex;flex-direction:column;gap:12px;min-height:36vh}
+    #messages{padding:14px var(--inner);display:flex;flex-direction:column;gap:14px;min-height:36vh}
     .msg{
       display:flex;gap:12px;padding:12px 14px;border:1px solid var(--border);
-      border-radius:14px;background:linear-gradient(180deg,#231d42,#1c1736);
+      border-radius:14px;background:#fff;
     }
     .avatar{
       width:40px;height:40px;border-radius:50%;
-      background:#3b2f74;display:flex;align-items:center;justify-content:center;
-      font-weight:800;color:#d9d4ff;flex:0 0 40px;overflow:hidden
+      background:#efe9ff;display:flex;align-items:center;justify-content:center;
+      font-weight:800;color:#5a3bb5;flex:0 0 40px;overflow:hidden
     }
     .avatar img{width:100%;height:100%;object-fit:cover}
     .bubble{flex:1;min-width:0}
     .meta{font-size:12px;color:var(--muted);display:flex;gap:10px;align-items:center}
-    .nick{color:#e5ddff;font-weight:700}
+    .nick{color:#3a2a86;font-weight:700}
     .content{margin-top:6px;line-height:1.58;word-wrap:break-word}
-    .content img{max-width:440px;border-radius:10px;border:1px solid var(--border);display:block;margin:8px 0}
+    .content img{max-width:480px;border-radius:10px;border:1px solid var(--border);display:block;margin:8px 0;background:#fafafa}
     .children{margin-top:10px;padding-left:52px;display:flex;flex-direction:column;gap:10px}
 
     /* Load more spans the same inner width as bubbles */
@@ -117,8 +126,6 @@
       text-align:center
     }
 
-    /* Small helpers */
-    .right{margin-left:auto}
     a{color:var(--accent)}
   </style>
 </head>
@@ -142,7 +149,7 @@
         <input id="file" type="file" accept="image/*"/>
         <span id="fileInfo" class="file-name"></span>
         <button id="btnAttach" class="btn">Attach image</button>
-        <div class="right">
+        <div style="margin-left:auto">
           <button id="btnSend" class="btn primary">Send</button>
         </div>
       </div>
@@ -150,7 +157,7 @@
         <span id="limits" class="limits">
           Images: PNG/JPG/GIF/WebP ≤ <span id="limitMb">5</span> MB · Message limit: <span id="limitChars">2000</span> chars · <span id="charCount">0</span>/<span id="limitChars2">2000</span>
         </span>
-        <span id="status" class="right"></span>
+        <span id="status" style="margin-left:auto"></span>
       </div>
     </section>
 
@@ -164,41 +171,31 @@
   <script>
   ;(() => {
     // ====== EDIT THESE IF YOU MOVE HOST/PATH ======
-    const WORKER_URL   = "https://twikoo-cloudflare.ertertertet07.workers.dev";
-    const PAGE_URL_PATH= "/chatboard/";
-    const PAGE_HREF    = "https://htmlunblockedgames.github.io/chatboard/";
+    const WORKER_URL    = "https://twikoo-cloudflare.ertertertet07.workers.dev";
+    const PAGE_URL_PATH = "/chatboard/";   // logical path used by Twikoo for this page
+    const PAGE_HREF     = "https://htmlunblockedgames.github.io/chatboard/";
     // Limits (client-side)
-    const MAX_FILE_MB  = 5;         // shown + enforced locally
-    const MAX_CHARS    = 2000;      // shown + enforced locally
+    const MAX_FILE_MB   = 5;
+    const MAX_CHARS     = 2000;
     // ==============================================
 
     // DOM
     const $=id=>document.getElementById(id);
-    const messagesEl = $("messages");
-    const loadMoreBtn= $("loadMore");
-    const nickEl     = $("nick");
-    const textEl     = $("text");
-    const fileEl     = $("file");
-    const btnChoose  = $("btnChoose");
-    const btnAttach  = $("btnAttach");
-    const btnSend    = $("btnSend");
-    const fileInfo   = $("fileInfo");
-    const statusEl   = $("status");
-    const connEl     = $("conn");
-    const limitMbEl  = $("limitMb");
-    const limitChars = $("limitChars");
-    const limitChars2= $("limitChars2");
-    const charCount  = $("charCount");
+    const messagesEl=$("messages"), loadMoreBtn=$("loadMore");
+    const nickEl=$("nick"), textEl=$("text");
+    const fileEl=$("file"), btnChoose=$("btnChoose"), btnAttach=$("btnAttach");
+    const btnSend=$("btnSend"), fileInfo=$("fileInfo"), statusEl=$("status"), connEl=$("conn");
+    const limitMbEl=$("limitMb"), limitChars=$("limitChars"), limitChars2=$("limitChars2"), charCount=$("charCount");
 
     // State
     let earliestMainCreated=null;
     let loading=false;
     let TK_TOKEN = localStorage.getItem('twikoo_access_token') || null;
 
-    // Init limits text
-    limitMbEl.textContent = MAX_FILE_MB;
-    limitChars.textContent = MAX_CHARS;
-    limitChars2.textContent = MAX_CHARS;
+    // Limits text
+    limitMbEl.textContent=MAX_FILE_MB;
+    limitChars.textContent=MAX_CHARS;
+    limitChars2.textContent=MAX_CHARS;
 
     // Status helper
     const setStatus=(t,isError=false)=>{
@@ -208,11 +205,10 @@
       statusEl.style.color = isError ? "var(--danger)" : "var(--muted)";
     };
 
-    // API with token persistence
+    // API with token carry-over
     async function api(eventObj){
-      const body = {...eventObj};
-      if (TK_TOKEN) body.accessToken = TK_TOKEN;
-
+      const body={...eventObj};
+      if (TK_TOKEN) body.accessToken=TK_TOKEN;
       const res = await fetch(WORKER_URL,{
         method:"POST",
         headers:{"content-type":"application/json"},
@@ -220,26 +216,27 @@
       });
       const json = await res.json().catch(()=>({}));
       if (json && json.accessToken){
-        TK_TOKEN = json.accessToken;
+        TK_TOKEN=json.accessToken;
         localStorage.setItem('twikoo_access_token', TK_TOKEN);
       }
       return json;
     }
 
+    // Connection pill
     async function checkConnection(){
       try{
         await api({event:"GET_FUNC_VERSION"});
-        connEl.textContent = "Status: Online";
+        connEl.textContent="Status: Online";
         connEl.classList.remove("bad"); connEl.classList.add("ok");
       }catch{
-        connEl.textContent = "Status: Offline";
+        connEl.textContent="Status: Offline";
         connEl.classList.remove("ok"); connEl.classList.add("bad");
       }
     }
 
+    // Load latest messages
     async function loadLatest(){
-      if (loading) return;
-      loading = true;
+      if (loading) return; loading=true;
       try{
         const r = await api({event:"COMMENT_GET", url: PAGE_URL_PATH});
         const list = Array.isArray(r?.data) ? r.data : [];
@@ -254,18 +251,15 @@
           earliestMainCreated = null;
           loadMoreBtn.style.display="none";
         }
-      }catch(e){
+      }catch{
         setStatus("Failed to load messages.", true);
-      }finally{
-        loading=false;
-      }
+      }finally{ loading=false; }
     }
 
+    // Load older (pagination by created timestamp)
     async function loadOlder(){
       if (loading || !earliestMainCreated) return;
-      loading = true;
-      loadMoreBtn.disabled=true;
-      loadMoreBtn.textContent="Loading…";
+      loading=true; loadMoreBtn.disabled=true; loadMoreBtn.textContent="Loading…";
       try{
         const r = await api({event:"COMMENT_GET", url: PAGE_URL_PATH, before: earliestMainCreated});
         const data = Array.isArray(r?.data) ? r.data : [];
@@ -274,24 +268,20 @@
           const tops = data.filter(c => (c.rid||"")==="");
           if (tops.length){
             earliestMainCreated = Math.min(earliestMainCreated, ...tops.map(c=>c.created||Date.now()));
-            loadMoreBtn.disabled=false;
-            loadMoreBtn.textContent="Load older";
+            loadMoreBtn.disabled=false; loadMoreBtn.textContent="Load older";
           }else{
             loadMoreBtn.textContent="No more";
           }
         }else{
           loadMoreBtn.textContent="No more";
         }
-      }catch(e){
+      }catch{
         setStatus("Failed loading older.", true);
-        loadMoreBtn.disabled=false;
-        loadMoreBtn.textContent="Load older";
-      }finally{
-        loading=false;
-      }
+        loadMoreBtn.disabled=false; loadMoreBtn.textContent="Load older";
+      }finally{ loading=false; }
     }
 
-    // Send
+    // Send a message
     async function sendMessage(){
       const nick = nickEl.value.trim() || "Anonymous";
       const html = textEl.value.trim();
@@ -318,7 +308,7 @@
       }
     }
 
-    // Attach image
+    // Attach image (uploads through Worker → IMGBB)
     async function attachImage(){
       const f = fileEl.files && fileEl.files[0];
       if (!f){ setStatus("Choose an image file first.", true); return; }
@@ -335,7 +325,7 @@
           charCount.textContent = String(textEl.value.length);
           setStatus(""); // clear
         }else{
-          throw new Error(r?.err || r?.message || "Upload failed");
+          throw new Error(prettifyError(r?.err || r?.message || "Upload failed"));
         }
       }catch(e){
         setStatus("Image upload failed: " + e.message, true);
@@ -344,16 +334,23 @@
       }
     }
 
-    // Friendly error translations
+    // Translate common Chinese backend messages → English
     function prettifyError(msg){
       if (!msg) return "Unexpected error";
-      if (msg.includes("发言频率过高")) return "You're sending too fast. Please wait a little and try again.";
-      if (msg.includes("评论太火爆")) return "Chat is busy right now — please try again in a moment.";
-      if (msg.includes("验证码")) return "Captcha check failed.";
-      return msg;
+      const m = String(msg);
+      if (m.includes("发言频率过高")) return "You're sending too fast. Please wait a little and try again.";
+      if (m.includes("评论太火爆")) return "Chat is busy right now — please try again in a moment.";
+      if (m.includes("验证码")) return "Captcha check failed.";
+      if (m.includes("未配置图片上传服务")) return "Image upload service is not configured.";
+      if (m.includes("请先登录")) return "Please sign in first.";
+      if (m.includes("密码错误")) return "Incorrect password.";
+      if (m.includes("未配置管理密码")) return "Admin password is not set.";
+      if (m.includes("数据库无配置")) return "Server configuration is missing.";
+      if (m.includes("Too Many Requests")) return "Too many requests. Please slow down.";
+      return m;
     }
 
-    // Render
+    // Rendering
     function renderComments(list){
       messagesEl.innerHTML="";
       appendComments(list);
@@ -383,6 +380,7 @@
       meta.append(nick,time);
 
       const content=document.createElement("div"); content.className="content";
+      // Server sanitizes HTML (XSS). We display as-is to render images/formatting.
       content.innerHTML = c.comment || "";
 
       bubble.append(meta,content);
@@ -410,7 +408,12 @@
     btnSend.addEventListener("click", sendMessage);
     btnAttach.addEventListener("click", attachImage);
     loadMoreBtn.addEventListener("click", loadOlder);
-    textEl.addEventListener("input", ()=>{ charCount.textContent=String(textEl.value.length); if (textEl.value.length>MAX_CHARS){ setStatus(`Message too long. Max ${MAX_CHARS} characters.`, true);} else if (statusEl.textContent.startsWith("Message too long")){ setStatus(""); }});
+    textEl.addEventListener("input", ()=>{
+      const n = textEl.value.length;
+      charCount.textContent=String(n);
+      if (n>MAX_CHARS) setStatus(`Message too long. Max ${MAX_CHARS} characters.`, true);
+      else if (statusEl.textContent.startsWith("Message too long")) setStatus("");
+    });
     fileEl.addEventListener("change", ()=>{
       const f=fileEl.files&&fileEl.files[0];
       if (!f){ fileInfo.textContent=""; return; }
