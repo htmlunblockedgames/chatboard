@@ -5,61 +5,132 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Chatboard</title>
 
-  <!-- Twikoo UI (regular, all features) -->
-  <link rel="preconnect" href="https://cdn.jsdelivr.net" />
   <script src="https://cdn.jsdelivr.net/npm/twikoo@1.6.40/dist/twikoo.all.min.js"></script>
 
   <style>
-    /* Page wrapper */
-    body{margin:0;background:#0b1021;color:#eaf0ff;font:14px/1.6 system-ui, -apple-system, Segoe UI, Roboto, Inter, Arial, sans-serif}
+    body{margin:0;background:#0b1021;color:#eaf0ff;font:14px/1.6 system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial,sans-serif}
     .wrap{max-width:900px;margin:32px auto;padding:0 16px}
-    h1{margin:0 0 16px;font-size:22px;font-weight:700;letter-spacing:.2px}
-    .card{background:rgba(22,28,60,.76);border:1px solid rgba(140,160,255,.14);border-radius:14px;box-shadow:0 10px 30px rgba(5,10,30,.35), inset 0 1px 0 rgba(255,255,255,.04);padding:14px}
+    h1{margin:0 0 16px;font-size:22px;font-weight:700}
+    .card{background:rgba(22,28,60,.76);border:1px solid rgba(140,160,255,.14);border-radius:14px;box-shadow:0 10px 30px rgba(5,10,30,.35),inset 0 1px 0 rgba(255,255,255,.04);padding:14px}
     a{color:#7aa2ff}
-
-    /* Hide email & website fields (keep everything else) */
-    .twikoo input[type="email"],
-    .twikoo input[type="url"] { display:none !important; }
-    /* Hide their wrappers in modern browsers */
+    /* Hide email & website in Twikoo */
+    .twikoo input[type="email"], .twikoo input[type="url"]{display:none!important}
     .twikoo .el-form-item:has(input[type="email"]),
-    .twikoo .el-form-item:has(input[type="url"]) { display:none !important; }
+    .twikoo .el-form-item:has(input[type="url"]){display:none!important}
 
-    /* Optional: compact toolbar */
-    .twikoo .tk-action { gap:6px }
+    /* Uploader */
+    .uploader{display:flex;gap:10px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
+    .uploader input[type="file"]{display:block}
+    .btn{appearance:none;border:1px solid rgba(140,160,255,.25);background:#111733;color:#eaf0ff;border-radius:10px;padding:8px 12px;cursor:pointer}
+    .btn[disabled]{opacity:.6;cursor:not-allowed}
+    #upStatus{font-size:12px;opacity:.8}
   </style>
 </head>
 <body>
   <div class="wrap">
     <h1>Chatboard</h1>
     <div class="card">
-      <!-- Regular Twikoo container -->
+      <!-- Custom image uploader (reverted working method) -->
+      <div class="uploader">
+        <input id="imgFile" type="file" accept="image/*" />
+        <button id="btnUpload" class="btn">Upload image</button>
+        <span id="upStatus"></span>
+      </div>
+      <!-- Twikoo -->
       <div id="tcomment"></div>
     </div>
   </div>
 
   <script>
-    // IMPORTANT: this must match the path you used in Worker/D1 data
+    // ===== config (matches your working backend) =====
+    const ENV_ID = "https://twikoo-cloudflare.ertertertet07.workers.dev";
     const PAGE_PATH = "/chatboard/";
+    // =================================================
 
-    // Init regular Twikoo with your Cloudflare Worker backend
-    twikoo.init({
-      el: "#tcomment",
-      envId: "https://twikoo-cloudflare.ertertertet07.workers.dev",
-      path: PAGE_PATH,
-      lang: "en",
-    });
+    // Init Twikoo
+    twikoo.init({ el: "#tcomment", envId: ENV_ID, path: PAGE_PATH, lang: "en" });
 
-    // Extra safety for older browsers that don't support :has():
-    function hideMailAndLink() {
-      document.querySelectorAll('.twikoo input[type="email"], .twikoo input[type="url"]').forEach(inp => {
+    // Hide email/url for browsers without :has()
+    function hideMailAndLink(){
+      document.querySelectorAll('.twikoo input[type="email"], .twikoo input[type="url"]').forEach(inp=>{
         const box = inp.closest('.el-form-item') || inp.closest('.tk-input') || inp.parentElement;
-        if (box) box.style.display = 'none';
-        inp.style.display = 'none';
+        if (box) box.style.display='none';
+        inp.style.display='none';
       });
     }
     const mo = new MutationObserver(hideMailAndLink);
-    mo.observe(document.getElementById('tcomment'), { childList: true, subtree: true });
+    mo.observe(document.getElementById('tcomment'), { childList:true, subtree:true });
     hideMailAndLink();
+
+    // Helpers
+    function getTwikooTextarea(){
+      return document.querySelector('.twikoo .el-textarea__inner');
+    }
+    function appendToComment(text){
+      const ta = getTwikooTextarea();
+      if (!ta) return false;
+      const atEnd = (ta.value && !ta.value.endsWith('\n')) ? '\n' : '';
+      ta.value = (ta.value || '') + atEnd + text + '\n';
+      ta.dispatchEvent(new Event('input', { bubbles:true })); // trigger Twikoo reactivity
+      return true;
+    }
+    function fileToDataURL(file){
+      return new Promise((resolve, reject)=>{
+        const fr = new FileReader();
+        fr.onload = () => resolve(fr.result);
+        fr.onerror = reject;
+        fr.readAsDataURL(file);
+      });
+    }
+
+    // Upload flow -> Worker UPLOAD_IMAGE -> insert markdown into Twikoo
+    const imgInput = document.getElementById('imgFile');
+    const btn = document.getElementById('btnUpload');
+    const statusEl = document.getElementById('upStatus');
+
+    async function uploadSelected(){
+      statusEl.textContent = '';
+      if (!imgInput.files || !imgInput.files[0]){
+        statusEl.textContent = 'Pick an image first.';
+        return;
+      }
+      const file = imgInput.files[0];
+      if (file.size > 8 * 1024 * 1024){ // 8MB soft limit
+        statusEl.textContent = 'Image too large.';
+        return;
+      }
+
+      btn.disabled = true;
+      statusEl.textContent = 'Uploading...';
+
+      try{
+        const dataUrl = await fileToDataURL(file);
+        const resp = await fetch(ENV_ID, {
+          method: 'POST',
+          headers: { 'content-type':'application/json' },
+          body: JSON.stringify({ event:'UPLOAD_IMAGE', photo:dataUrl })
+        });
+        const json = await resp.json();
+
+        if (json && json.code === 0 && json.data && json.data.url){
+          const ok = appendToComment(`![](${json.data.url})`);
+          statusEl.textContent = ok ? 'Inserted image link.' : `Uploaded: ${json.data.url} (paste into comment)`;
+          if (!ok){
+            // Copy to clipboard as fallback
+            try{ await navigator.clipboard.writeText(json.data.url); } catch {}
+          }
+          imgInput.value = '';
+        } else {
+          statusEl.textContent = (json && (json.err || json.message)) ? json.err || json.message : 'Upload failed.';
+        }
+      } catch(e){
+        statusEl.textContent = 'Network error.';
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    btn.addEventListener('click', uploadSelected);
   </script>
 </body>
 </html>
