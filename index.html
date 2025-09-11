@@ -5,14 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Chatboard</title>
   <style>
-    :root {
-      --bg:#0b1021; --panel:#121735; --muted:#7c86b2; --text:#e7eaf6; --accent:#7aa2ff; --danger:#ff6b6b;
-      --border:#1d2450;
-    }
+    :root { --bg:#0b1021; --panel:#121735; --muted:#7c86b2; --text:#e7eaf6; --accent:#7aa2ff; --danger:#ff6b6b; --ok:#47dca0; --border:#1d2450; }
     * { box-sizing:border-box }
     body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; background:var(--bg); color:var(--text); }
     header { padding:18px 16px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; }
     header h1 { margin:0; font-size:18px; letter-spacing:.3px }
+    .status-pill { font-size:11px; color:#9fb4ff; border:1px solid var(--border); background:#0f1440; padding:3px 8px; border-radius:999px }
     .container { max-width:920px; margin:0 auto; padding:16px; display:grid; gap:16px; }
     .panel { background:var(--panel); border:1px solid var(--border); border-radius:16px; }
     #messages { padding:12px; display:flex; flex-direction:column; gap:10px; min-height:40vh; }
@@ -27,9 +25,7 @@
     .children { margin-top:8px; padding-left:46px; display:flex; flex-direction:column; gap:8px }
     #composer { padding:12px; display:grid; gap:10px }
     .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap }
-    input[type="text"], textarea {
-      width:100%; padding:10px 12px; border-radius:10px; border:1px solid var(--border); background:#0f1440; color:var(--text);
-    }
+    input[type="text"], textarea { width:100%; padding:10px 12px; border-radius:10px; border:1px solid var(--border); background:#0f1440; color:var(--text); }
     textarea { min-height:100px; resize:vertical }
     button { padding:10px 12px; border-radius:10px; border:1px solid var(--border); background:#1a235a; color:#fff; cursor:pointer }
     button.primary { background:linear-gradient(180deg,#3b63ff,#2748cf) }
@@ -37,24 +33,18 @@
     #status { padding:10px 12px; border-top:1px solid var(--border); color:var(--muted); font-size:12px }
     #loadMore { margin:10px auto 14px; display:block }
     .row-slim { gap:6px }
-    a { color:var(--accent) }
-    .danger { color:var(--danger) }
-
-    /* Themed "Choose image" button */
     #file { display:none }
-    .file-btn { display:inline-flex; align-items:center; gap:8px; }
+    .file-note { font-size:12px; color:var(--muted) }
   </style>
 </head>
 <body>
   <header>
     <h1>Chatboard</h1>
-    <div class="pill" style="font-size:11px; color:#9fb4ff; border:1px solid var(--border); background:#0f1440; padding:3px 8px; border-radius:999px">
-      Connected: <span id="conn">checking…</span>
-    </div>
+    <div class="status-pill">Status: <span id="conn">Checking…</span></div>
   </header>
 
   <main class="container">
-    <!-- Composer FIRST -->
+    <!-- Composer -->
     <section id="composer" class="panel">
       <div class="row">
         <input id="nick" type="text" placeholder="Nickname (optional, default Anonymous)" />
@@ -65,7 +55,8 @@
 
       <div class="row row-slim">
         <input id="file" type="file" accept="image/*" />
-        <button id="btnFile" class="file-btn" type="button">Choose image</button>
+        <button id="btnFile" type="button">Choose image</button>
+        <span id="fileName" class="file-note"></span>
         <button id="btnAttach" type="button">Attach image</button>
         <button id="btnSend" class="primary" type="button">Send</button>
       </div>
@@ -73,7 +64,7 @@
       <div id="status">Ready.</div>
     </section>
 
-    <!-- Comments AFTER composer -->
+    <!-- Comments -->
     <section class="panel">
       <div id="messages"></div>
       <button id="loadMore" class="primary" style="display:none">Load older</button>
@@ -83,57 +74,51 @@
   <script>
   ;(() => {
     // ====== EDIT THESE IF YOU MOVE HOST/PATH ======
-    const WORKER_URL = "https://twikoo-cloudflare.ertertertet07.workers.dev";
-    const PAGE_URL_PATH = "/chatboard/";
-    const PAGE_HREF = "https://htmlunblockedgames.github.io/chatboard/";
+    const WORKER_URL   = "https://twikoo-cloudflare.ertertertet07.workers.dev";
+    const PAGE_URL_PATH= "/chatboard/";
+    const PAGE_HREF    = "https://htmlunblockedgames.github.io/chatboard/";
     // ==============================================
 
     // DOM
     const $ = id => document.getElementById(id);
     const messagesEl = $("messages");
-    const loadMoreBtn = $("loadMore");
-    const nickEl = $("nick");
-    const textEl = $("text");
-    const fileEl = $("file");
-    const btnFile = $("btnFile");
-    const btnAttach = $("btnAttach");
-    const btnSend = $("btnSend");
-    const statusEl = $("status");
-    const connEl = $("conn");
+    const loadMoreBtn= $("loadMore");
+    const nickEl     = $("nick");
+    const textEl     = $("text");
+    const fileEl     = $("file");
+    const btnFile    = $("btnFile");
+    const btnAttach  = $("btnAttach");
+    const btnSend    = $("btnSend");
+    const statusEl   = $("status");
+    const connEl     = $("conn");
+    const fileNameEl = $("fileName");
 
     // State
-    let earliestMainCreated = null; // for pagination
+    let earliestMainCreated = null;           // for pagination (top-level only)
     let loading = false;
+    const seenTopIds = new Set();             // dedupe top-levels
 
     // Utils
-    const setStatus = (t, isError=false) => {
-      statusEl.textContent = t;
-      statusEl.style.color = isError ? "var(--danger)" : "var(--muted)";
-    };
+    const setStatus = (t, isError=false) => { statusEl.textContent = t; statusEl.style.color = isError ? "var(--danger)" : "var(--muted)"; };
     const fmtTime = ts => new Date(ts).toLocaleString();
     const initialOf = s => (s || "A").trim().charAt(0).toUpperCase();
+    const topId = c => c.id || c._id || `${c.created || ""}-${c.nick || ""}`;
+    const isTopLevel = c => (c.rid || "") === "";
+    const notPinned = c => c.top === 0 || c.top === false || typeof c.top === "undefined";
 
     // API
     async function api(eventObj) {
-      const res = await fetch(WORKER_URL, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(eventObj)
-      });
+      const res = await fetch(WORKER_URL, { method: "POST", headers: { "content-type":"application/json" }, body: JSON.stringify(eventObj) });
       return res.json().catch(() => ({}));
     }
 
     async function checkConnection() {
       try {
-        const r = await api({ event: "GET_FUNC_VERSION" });
-        if (r && r.version) {
-          connEl.textContent = `v${r.version}`;
-          connEl.style.color = "#8ef5a9";
-        } else {
-          connEl.textContent = "ok";
-        }
+        await api({ event: "GET_FUNC_VERSION" });
+        connEl.textContent = "Online";
+        connEl.style.color = "var(--ok)";
       } catch {
-        connEl.textContent = "failed";
+        connEl.textContent = "Offline";
         connEl.style.color = "var(--danger)";
       }
     }
@@ -143,13 +128,18 @@
       loading = true;
       setStatus("Loading messages…");
       try {
-        const r = await api({ event: "COMMENT_GET", url: PAGE_URL_PATH });
+        const r = await api({ event:"COMMENT_GET", url: PAGE_URL_PATH });
         renderComments(r?.data || []);
-        const tops = (r?.data || []).filter(c => (c.rid || "") === "");
-        if (tops.length) {
-          earliestMainCreated = Math.min(...tops.map(c => c.created || Date.now()));
-          loadMoreBtn.style.display = "inline-block";
+        // track earliest MAIN (exclude pinned if possible)
+        const mains = (r?.data || []).filter(c => isTopLevel(c) && notPinned(c));
+        const pool  = mains.length ? mains : (r?.data || []).filter(isTopLevel);
+        if (pool.length) {
+          earliestMainCreated = Math.min(...pool.map(c => c.created || Date.now()));
         }
+        // show/hide loadMore from server flag when available
+        loadMoreBtn.style.display = r?.more ? "inline-block" : "none";
+        loadMoreBtn.disabled = !r?.more;
+        loadMoreBtn.textContent = r?.more ? "Load older" : "No more";
         setStatus("Loaded.");
       } catch {
         setStatus("Failed to load messages.", true);
@@ -162,109 +152,105 @@
       loadMoreBtn.disabled = true;
       loadMoreBtn.textContent = "Loading…";
       try {
-        const r = await api({
-          event: "COMMENT_GET",
-          url: PAGE_URL_PATH,
-          before: earliestMainCreated
-        });
+        const r = await api({ event:"COMMENT_GET", url: PAGE_URL_PATH, before: earliestMainCreated });
         const data = r?.data || [];
         if (data.length) {
-          prependComments(data);
-          const tops = data.filter(c => (c.rid || "") === "");
-          if (tops.length) {
-            earliestMainCreated = Math.min(earliestMainCreated, ...tops.map(c => c.created || Date.now()));
+          prependComments(data); // will dedupe
+          const mains = data.filter(c => isTopLevel(c) && notPinned(c));
+          if (mains.length) {
+            const minCreated = Math.min(...mains.map(c => c.created || earliestMainCreated));
+            earliestMainCreated = Math.min(earliestMainCreated, minCreated);
           }
+        }
+        // update button based on 'more'
+        if (r?.more) {
+          loadMoreBtn.disabled = false;
+          loadMoreBtn.textContent = "Load older";
         } else {
           loadMoreBtn.textContent = "No more";
           loadMoreBtn.disabled = true;
         }
       } catch {
         setStatus("Failed loading older.", true);
-      } finally {
-        loading = false;
-        if (!loadMoreBtn.disabled) loadMoreBtn.textContent = "Load older";
-      }
+        loadMoreBtn.disabled = false;
+        loadMoreBtn.textContent = "Load older";
+      } finally { loading = false; }
     }
 
     async function sendMessage() {
       const nick = nickEl.value.trim() || "Anonymous";
       const html = textEl.value.trim();
-      if (!html) {
-        setStatus("Type a message first.", true);
-        return;
-      }
-      btnSend.disabled = true;
-      btnSend.textContent = "Sending…";
-      setStatus("Sending…");
+      if (!html) { setStatus("Type a message first.", true); return; }
+      btnSend.disabled = true; btnSend.textContent = "Sending…"; setStatus("Sending…");
       try {
-        const r = await api({
-          event: "COMMENT_SUBMIT",
-          nick,
-          comment: html,
-          url: PAGE_URL_PATH,
-          href: PAGE_HREF,
-          ua: navigator.userAgent
-        });
+        const r = await api({ event:"COMMENT_SUBMIT", nick, comment: html, url: PAGE_URL_PATH, href: PAGE_HREF, ua: navigator.userAgent });
         if (r && r.id) {
           setStatus("Sent!");
           textEl.value = "";
           await loadLatest();
         } else {
-          throw new Error(r?.message || "Unknown error");
+          const msg = translateError(r?.message || "Unknown error");
+          throw new Error(msg);
         }
       } catch (e) {
-        setStatus("Send failed: " + e.message, true);
+        setStatus("Send failed: " + translateError(e.message), true);
       } finally {
-        btnSend.disabled = false;
-        btnSend.textContent = "Send";
+        btnSend.disabled = false; btnSend.textContent = "Send";
       }
     }
 
-    async function chooseFile() {
-      fileEl.click();
+    function translateError(m) {
+      if (!m) return "Something went wrong.";
+      if (m.includes("发言频率过高")) return "You're sending too fast. Please slow down.";
+      if (m.includes("评论太火爆"))   return "Chat is very busy right now. Try again in a moment.";
+      if (m.toLowerCase().includes("captcha")) return "Captcha verification failed.";
+      return m;
     }
+
+    function chooseFile() { fileEl.click(); }
+    fileEl.addEventListener("change", () => {
+      const f = fileEl.files?.[0];
+      fileNameEl.textContent = f ? `Selected: ${f.name}` : "";
+    });
 
     async function attachImage() {
       const f = fileEl.files && fileEl.files[0];
       if (!f) { setStatus("Choose an image file first.", true); return; }
-      btnAttach.disabled = true;
-      btnAttach.textContent = "Uploading…";
-      setStatus("Uploading image…");
+      btnAttach.disabled = true; btnAttach.textContent = "Uploading…"; setStatus("Uploading image…");
       try {
         const dataURL = await fileToDataURL(f);
-        const r = await api({ event: "UPLOAD_IMAGE", photo: dataURL });
+        const r = await api({ event:"UPLOAD_IMAGE", photo: dataURL });
         if (r?.code === 0 && r?.data?.url) {
-          const url = r.data.url;
-          insertAtCursor(textEl, `\n<img src="${url}" alt="">\n`);
-          setStatus("Image attached.");
+          insertAtCursor(textEl, `\n<img src="${r.data.url}" alt="">\n`);
+          setStatus(`Image attached: ${f.name}`);
+          fileEl.value = ""; fileNameEl.textContent = "";
         } else {
           throw new Error(r?.err || r?.message || "Upload failed");
         }
       } catch (e) {
         setStatus("Image upload failed: " + e.message, true);
       } finally {
-        btnAttach.disabled = false;
-        btnAttach.textContent = "Attach image";
-        fileEl.value = "";
+        btnAttach.disabled = false; btnAttach.textContent = "Attach image";
       }
     }
 
     // Rendering
     function renderComments(list) {
+      seenTopIds.clear();
       messagesEl.innerHTML = "";
       appendComments(list);
     }
 
     function appendComments(list) {
-      const tops = list.filter(c => (c.rid || "") === "");
+      const tops = list.filter(isTopLevel);
       for (const c of tops) {
+        if (seenTopIds.has(topId(c))) continue;
+        seenTopIds.add(topId(c));
         messagesEl.appendChild(renderMsg(c));
-        if (Array.isArray(c.children)) {
+        if (Array.isArray(c.children) && c.children.length) {
           const childrenWrap = document.createElement("div");
           childrenWrap.className = "children";
-          for (const ch of c.children) {
-            childrenWrap.appendChild(renderMsg(ch, true));
-          }
+          for (const ch of c.children) childrenWrap.appendChild(renderMsg(ch, true));
           messagesEl.lastElementChild.appendChild(childrenWrap);
         }
       }
@@ -272,8 +258,11 @@
 
     function prependComments(list) {
       const frag = document.createDocumentFragment();
-      const tops = list.filter(c => (c.rid || "") === "");
+      const tops = list.filter(isTopLevel);
       for (const c of tops) {
+        const id = topId(c);
+        if (seenTopIds.has(id)) continue;
+        seenTopIds.add(id);
         const node = renderMsg(c);
         if (Array.isArray(c.children) && c.children.length) {
           const childrenWrap = document.createElement("div");
@@ -294,8 +283,7 @@
       avatar.className = "avatar";
       if (c.avatar) {
         const img = document.createElement("img");
-        img.src = c.avatar;
-        img.alt = c.nick || "avatar";
+        img.src = c.avatar; img.alt = c.nick || "avatar";
         avatar.appendChild(img);
       } else {
         avatar.textContent = initialOf(c.nick);
@@ -311,8 +299,7 @@
       nick.textContent = c.nick || "Anonymous";
       const time = document.createElement("span");
       time.textContent = fmtTime(c.created || Date.now());
-      meta.appendChild(nick);
-      meta.appendChild(time);
+      meta.appendChild(nick); meta.appendChild(time);
 
       const content = document.createElement("div");
       content.className = "content";
@@ -320,7 +307,6 @@
 
       bubble.appendChild(meta);
       bubble.appendChild(content);
-
       wrap.appendChild(avatar);
       wrap.appendChild(bubble);
       return wrap;
@@ -335,13 +321,10 @@
         fr.readAsDataURL(file);
       });
     }
-
     function insertAtCursor(el, text) {
       const [start, end] = [el.selectionStart ?? el.value.length, el.selectionEnd ?? el.value.length];
       el.value = el.value.slice(0, start) + text + el.value.slice(end);
-      const pos = start + text.length;
-      el.setSelectionRange(pos, pos);
-      el.focus();
+      const pos = start + text.length; el.setSelectionRange(pos, pos); el.focus();
     }
 
     // Wire up
@@ -357,6 +340,7 @@
       const f = e.dataTransfer?.files?.[0];
       if (f && f.type.startsWith("image/")) {
         fileEl.files = e.dataTransfer.files;
+        fileNameEl.textContent = `Selected: ${f.name}`;
         await attachImage();
       }
     });
