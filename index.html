@@ -111,26 +111,23 @@
     .content img{max-width:480px;border-radius:10px;border:1px solid var(--border);display:block;margin:8px 0;background:#fafafa}
 
     /* Actions */
-    .actions{display:flex;gap:14px;align-items:center;margin-top:8px}
+    .actions{display:flex;gap:8px;align-items:center;margin-top:8px}
     .action{
       font-size:12px;color:var(--accent);cursor:pointer;font-weight:800;
       background:#fdfdfd;border:1px solid var(--border-2);padding:6px 10px;border-radius:999px;
     }
     .action:hover{background:#f8f8f8}
 
-    /* Replies toggle bar + container */
-    .replies-bar{
-      margin-top:8px; display:inline-flex; align-items:center; gap:8px;
-      background:#f6f9ff; border:1px dashed #cfe1ff; color:#0280ca;
-      padding:8px 10px; border-radius:10px; font-size:12px; cursor:pointer; user-select:none;
-    }
-    .replies-bar .caret{display:inline-block;transition:transform .15s ease}
-    .replies-bar[aria-expanded="true"] .caret{transform:rotate(90deg)}
+    /* Replies toggle bar + container.
+       Use CSS vars so nested replies indent progressively. */
     .replies{
-      display:none; /* fixed: default hidden */
-      margin-top:10px; padding-left:52px;
+      display:none; /* default hidden */
+      margin-top:10px;
+      --indent: 0px; /* base indent. nested .replies increase this via inheritance */
       flex-direction:column; gap:10px;
     }
+    .replies .replies { --indent: calc(var(--indent) + 20px); }
+    .replies .msg { margin-left: var(--indent); }
 
     /* Load older – full bubble width */
     #loadMore{
@@ -229,10 +226,16 @@
     };
     function fileToDataURL(file){ return new Promise((res,rej)=>{ const fr=new FileReader(); fr.onerror=()=>rej(fr.error||new Error("FileReader error")); fr.onload=()=>res(fr.result); fr.readAsDataURL(file); }); }
     function insertAtCursor(el,text){ const s=el.selectionStart??el.value.length, e=el.selectionEnd??el.value.length; el.value=el.value.slice(0,s)+text+el.value.slice(e); const pos=s+text.length; el.setSelectionRange(pos,pos); el.focus(); }
+
+    // client-side safe admin-blocking (handles leet/obfuscation)
     function isForbiddenNick(n){
-      const slug = String(n || '').toLowerCase().replace(/[^a-z0-9]/g,'');
-      return slug.includes('admin') || slug.includes('administrator');
+      const map = {'0':'o','@':'a','4':'a','3':'e','5':'s','$':'s','7':'t','+':'t','!':'i','1':'i','l':'i','|':'i'}
+      const raw = String(n||'') .toLowerCase()
+      const mapped = raw.split('').map(ch => map[ch] || ch).join('')
+      const slug = mapped.replace(/[^a-z0-9]/g,'')
+      return slug.includes('admin') || slug.includes('administrator')
     }
+
     const showLbl = n => (n===1 ? 'Show Reply' : 'Show Replies');
     const closeLbl = n => (n===1 ? 'Close Reply' : 'Close Replies');
 
@@ -354,6 +357,7 @@
         const parentNick = state.all.get(c.pid)?.nick || "someone";
         const inreply=document.createElement("span");
         inreply.className="inreply";
+        inreply.style.marginLeft = "8px";
         inreply.textContent = `↪︎ ${parentNick}`;
         meta.append(inreply);
       }
@@ -364,7 +368,6 @@
       const replyBtn=document.createElement("span"); replyBtn.className="action"; replyBtn.dataset.action="reply"; replyBtn.textContent="↩ Reply";
       actions.append(replyBtn);
 
-      // For top-level threads, the toggle chip is added in renderAll()
       bubble.append(meta,content,actions);
       wrap.append(avatar,bubble);
       return wrap;
@@ -480,7 +483,7 @@
         const dataURL = await fileToDataURL(f);
         const r = await api({event:"UPLOAD_IMAGE", photo:dataURL});
         if (r?.code===0 && r?.data?.url){
-          insertAtCursor(textEl, `\n<img src="${r.data.url}" alt="">\n`);
+          insertAtCursor(textEl, `\\n<img src=\"${r.data.url}\" alt=\"\">\\n`);
           charCount.textContent = String(textEl.value.length);
           setStatus("");
         }else{
@@ -513,8 +516,8 @@
     // Delegate Reply / Toggle clicks
     messagesEl.addEventListener("click",(e)=>{
       const card = e.target.closest('.msg');
-      const replyBtn = e.target.closest('[data-action="reply"]');
-      const toggleBtn = e.target.closest('[data-action="toggle-thread"]');
+      const replyBtn = e.target.closest('[data-action=\"reply\"]');
+      const toggleBtn = e.target.closest('[data-action=\"toggle-thread\"]');
 
       if (replyBtn && card){ setReplyTarget(card); return; }
 
@@ -543,7 +546,7 @@
 
     // Keyboard support for the toggle
     messagesEl.addEventListener("keydown",(e)=>{
-      const toggleBtn = e.target.closest('[data-action="toggle-thread"]');
+      const toggleBtn = e.target.closest('[data-action=\"toggle-thread\"]');
       if (toggleBtn && (e.key==='Enter' || e.key===' ')){ e.preventDefault(); toggleBtn.click(); }
     });
 
