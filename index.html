@@ -229,7 +229,8 @@
     };
     function fileToDataURL(file){ return new Promise((res,rej)=>{ const fr=new FileReader(); fr.onerror=()=>rej(fr.error||new Error("FileReader error")); fr.onload=()=>res(fr.result); fr.readAsDataURL(file); }); }
     function insertAtCursor(el,text){ const s=el.selectionStart??el.value.length, e=el.selectionEnd??el.value.length; el.value=el.value.slice(0,s)+text+el.value.slice(e); const pos=s+text.length; el.setSelectionRange(pos,pos); el.focus(); }
-    const viewLabel=(n,open)=> open?`Hide replies (${n})`:(n===1?`View 1 reply`:`View ${n} replies`);
+    const showLbl = n => (n===1 ? 'Show Reply' : 'Show Replies');
+    const closeLbl = n => (n===1 ? 'Close Reply' : 'Close Replies');
 
     // API with token persistence
     async function api(eventObj){
@@ -292,29 +293,36 @@
       const frag=document.createDocumentFragment();
       for (const c of state.tops){
         const node = renderMsg(c);
-
         const count = (c.children?.length)||0;
-        if (count>0){
-          const bar = renderRepliesBar(c);
-          node.appendChild(bar);
 
-          const cont = document.createElement("div");
-          cont.className="replies";
-          cont.id = "replies-"+c._id;
-          if (expanded.has(c._id)) {
-            buildReplies(cont, c);
-            cont.style.display="flex";
-            bar.setAttribute('aria-expanded','true');
-            bar.querySelector('.label').textContent = viewLabel(count,true);
-          } else {
-            cont.style.display="none";
-            bar.setAttribute('aria-expanded','false');
-            bar.querySelector('.label').textContent = viewLabel(count,false);
-          }
-          node.appendChild(cont);
+        // Replies container lives under each card
+        const cont = document.createElement("div");
+        cont.className="replies";
+        cont.id = "replies-"+c._id;
+
+        if (expanded.has(c._id)) {
+          if (count>0) buildReplies(cont, c);
+          cont.style.display="flex";
+        } else {
+          cont.style.display="none";
         }
-        // no bar if no replies (cleaner, YouTube-style)
 
+        // Add toggle next to the Reply button only when there is at least one reply
+        if (count>0){
+          const actions = node.querySelector('.actions');
+          if (actions){
+            const toggleBtn = document.createElement('span');
+            toggleBtn.className='action';
+            toggleBtn.dataset.action='toggle-thread';
+            toggleBtn.dataset.parent=c._id;
+            toggleBtn.setAttribute('role','button');
+            toggleBtn.setAttribute('tabindex','0');
+            toggleBtn.textContent = expanded.has(c._id) ? closeLbl(count) : showLbl(count);
+            actions.append(toggleBtn);
+          }
+        }
+
+        node.appendChild(cont);
         frag.appendChild(node);
       }
       messagesEl.appendChild(frag);
@@ -347,25 +355,6 @@
       return wrap;
     }
 
-    function renderRepliesBar(parent){
-      const bar=document.createElement("div");
-      bar.className="replies-bar";
-      bar.dataset.action="toggleReplies";
-      bar.dataset.parent = parent._id;
-      bar.setAttribute('role','button');
-      bar.setAttribute('tabindex','0');
-
-      const caret=document.createElement('span');
-      caret.className='caret';
-      caret.textContent='▸';
-
-      const label=document.createElement('span');
-      label.className='label';
-      label.textContent='View replies';
-
-      bar.append(caret,label);
-      return bar;
-    }
 
     function buildReplies(container, parent){
       container.innerHTML="";
@@ -499,13 +488,13 @@
     // Delegate Reply / Toggle clicks
     messagesEl.addEventListener("click",(e)=>{
       const card = e.target.closest('.msg');
-      const toggle = e.target.closest('.replies-bar');
-      const btn = e.target.closest('[data-action="reply"]');
+      const replyBtn = e.target.closest('[data-action="reply"]');
+      const toggleBtn = e.target.closest('[data-action="toggle-thread"]');
 
-      if (btn && card){ setReplyTarget(card); return; }
+      if (replyBtn && card){ setReplyTarget(card); return; }
 
-      if (toggle){
-        const pid = toggle.dataset.parent;
+      if (toggleBtn){
+        const pid = toggleBtn.dataset.parent;
         if (!pid) return;
         const cont = document.getElementById("replies-"+pid);
         const parent = state.all.get(pid);
@@ -517,22 +506,20 @@
         if (open){
           cont.style.display="none";
           expanded.delete(pid);
-          toggle.setAttribute('aria-expanded','false');
-          toggle.querySelector('.label').textContent = viewLabel(count,false);
+          toggleBtn.textContent = showLbl(count);
         }else{
           if (!cont.childElementCount) buildReplies(cont, parent);
           cont.style.display="flex";
           expanded.add(pid);
-          toggle.setAttribute('aria-expanded','true');
-          toggle.querySelector('.label').textContent = viewLabel(count,true);
+          toggleBtn.textContent = closeLbl(count);
         }
       }
     });
 
     // Keyboard support for the toggle
     messagesEl.addEventListener("keydown",(e)=>{
-      const toggle = e.target.closest('.replies-bar');
-      if (toggle && (e.key==='Enter' || e.key===' ')){ e.preventDefault(); toggle.click(); }
+      const toggleBtn = e.target.closest('[data-action="toggle-thread"]');
+      if (toggleBtn && (e.key==='Enter' || e.key===' ')){ e.preventDefault(); toggleBtn.click(); }
     });
 
     // Drag & drop image onto textarea
