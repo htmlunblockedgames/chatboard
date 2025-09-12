@@ -244,23 +244,56 @@
       catch{ connEl.textContent="Status: Offline"; connEl.classList.remove("ok"); connEl.classList.add("bad"); }
     }
 
-    // ===== State building (group by rid at top-level; depth comes from server) =====
+    // ===== Flatten server payload and rebuild threads =====
     function mergeList(list){
-      for (const c of list){
-        const id = c._id || c.id;
-        if (!id) continue;
+      // Flatten server payload (top-level + nested replies) and compute depth and parentNick.
+      // Build state.all for every comment, then link root -> all replies via rid for counts/toggle.
+      if (!Array.isArray(list)) list = [];
+
+      const add = (node, depth = 0, parentNick = null, rootId = null) => {
+        const id = node._id || node.id;
+        if (!id) return;
+
+        // Root id for this thread
+        const root = depth === 0 ? id : (rootId || node.rid || '');
+
+        const item = {
+          ...node,
+          _id: id,
+          depth,
+          parentNick: parentNick || null,
+          // ensure rid is "" for root, otherwise fixed to the thread root id
+          rid: depth === 0 ? "" : root
+        };
+
         const prev = state.all.get(id) || {};
-        state.all.set(id, { ...prev, ...c, _id:id, children:[] });
-      }
-      // clear children then re-link by rid (root id)
+        state.all.set(id, { ...prev, ...item, children: [] });
+
+        // Recurse over nested replies if present
+        if (Array.isArray(node.replies) && node.replies.length){
+          for (const r of node.replies){
+            add(r, depth + 1, node.nick || "Anonymous", root);
+          }
+        }
+      };
+
+      // Reset children links
+      for (const obj of state.all.values()) obj.children = [];
+
+      // Add all top-level nodes and their nested replies
+      for (const c of list) add(c, 0, null, null);
+
+      // Rebuild root -> children mapping by rid
       for (const obj of state.all.values()) obj.children = [];
       for (const c of state.all.values()){
-        if (c.rid && c.rid !== ""){
-          const p = state.all.get(c.rid);
-          if (p) p.children.push(c);
+        if ((c.rid || "") !== ""){
+          const root = state.all.get(c.rid);
+          if (root) root.children.push(c);
         }
       }
-      state.tops = Array.from(state.all.values()).filter(x => (x.rid||"")==="");
+
+      // Top-level items are those with no rid
+      state.tops = Array.from(state.all.values()).filter(x => (x.rid || "") === "");
       state.tops.sort((a,b)=>(b.created||0)-(a.created||0));
       if (state.tops.length){
         earliestMainCreated = Math.min(...state.tops.map(x=>x.created||Date.now()));
