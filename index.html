@@ -43,6 +43,13 @@
     .container{max-width:920px;margin:0 auto;padding:20px;display:grid;gap:18px}
     .panel{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow)}
 
+    /* Admin panel */
+    #adminPanel{padding:18px;display:none;gap:10px}
+    #adminPanel .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+    #adminNote{font-size:12px;color:var(--muted)}
+    .admin-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}
+    .tag{font-size:11px;border:1px solid var(--border-2);border-radius:999px;padding:3px 8px;color:var(--muted);background:#f9fafb}
+
     /* Composer */
     #composer{padding:18px;display:grid;gap:12px}
     .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
@@ -139,6 +146,22 @@
   </header>
 
   <main class="container">
+    <!-- Admin Panel (hidden; open via #admin or ?admin=1) -->
+    <section id="adminPanel" class="panel">
+      <div class="row">
+        <strong>Admin</strong>
+        <span id="adminNote" class="tag">Login to manage comments</span>
+      </div>
+      <div class="row" id="adminLoginRow">
+        <input id="adminPass" type="password" placeholder="Admin password"/>
+        <button id="btnAdminLogin" class="btn">Login</button>
+      </div>
+      <div class="row" id="adminControls" style="display:none">
+        <span class="tag">Pinned: <span id="pinCount">0</span> / 3</span>
+        <button id="btnAdminLogout" class="btn">Logout</button>
+      </div>
+    </section>
+
     <!-- Composer -->
     <section id="composer" class="panel">
       <div class="row">
@@ -194,6 +217,12 @@
     const nickEl=$("nick"), textEl=$("text");
     const fileEl=$("file"), btnAttach=$("btnAttach"), btnSend=$("btnSend"), btnChoose=$("btnChoose");
     const fileInfo=$("fileInfo"), statusEl=$("status"), connEl=$("conn");
+
+    // Admin UI refs
+    const adminPanel=$("adminPanel"), adminPass=$("adminPass"), btnAdminLogin=$("btnAdminLogin"),
+          btnAdminLogout=$("btnAdminLogout"), adminLoginRow=$("adminLoginRow"),
+          adminControls=$("adminControls"), pinCountEl=$("pinCount"), adminNote=$("adminNote");
+
     const limitMbEl=$("limitMb"), limitChars=$("limitChars"), limitChars2=$("limitChars2"), charCount=$("charCount");
     const replyTo=$("replyTo"), replyName=$("replyName"), replyCancel=$("replyCancel");
 
@@ -204,6 +233,7 @@
     let earliestMainCreated=null; // smallest created of current top-levels
     let replyTarget=null; // {_id, rid, nick}
     const expanded = new Set(); // top-level ids with visible replies
+    let isAdmin = !!TK_TOKEN;
 
     // Limits text
     limitMbEl.textContent=MAX_FILE_MB;
@@ -225,7 +255,7 @@
       if (!nick) return false;
       const subs = { '0':'o','1':'i','!':'i','|':'i','l':'i','3':'e','4':'a','5':'s','7':'t','@':'a','$':'s' };
       let s = String(nick).toLowerCase();
-      s = s.replace(/[0l1!|3 4 5 7@$]/g, ch => subs[ch] || ch).replace(/[^a-z]/g,'');
+      s = s.replace(/[0l1!|3457@$]/g, ch => subs[ch] || ch).replace(/[^a-z]/g,'');
       return s.includes('admin') || s.includes('administrator');
     }
 
@@ -238,6 +268,51 @@
       return json;
     }
 
+    // Admin helpers
+    function revealAdminIfRequested(){
+      const q = new URLSearchParams(location.search);
+      if (q.get('admin') === '1' || location.hash === '#admin') {
+        adminPanel.style.display = 'grid';
+      }
+    }
+    function updateAdminUI(){
+      if (!adminPanel) return;
+      const pinned = state.tops.filter(x => Number(x.top) === 1).length;
+      pinCountEl.textContent = String(pinned);
+      if (isAdmin) {
+        adminLoginRow.style.display = 'none';
+        adminControls.style.display = 'flex';
+        adminNote.textContent = 'You are logged in as admin';
+      } else {
+        adminLoginRow.style.display = 'flex';
+        adminControls.style.display = 'none';
+        adminNote.textContent = 'Login to manage comments';
+      }
+    }
+    async function adminLogin(){
+      const pw = adminPass.value.trim();
+      if (!pw) { setStatus('Enter password', true); return; }
+      const r = await api({event:'ADMIN_GET_TOKEN', password: pw});
+      if (r && r.code === 0 && r.token) {
+        TK_TOKEN = r.token;
+        localStorage.setItem('twikoo_access_token', TK_TOKEN);
+        isAdmin = true;
+        await loadLatest();
+        updateAdminUI();
+        setStatus('Admin logged in');
+      } else {
+        setStatus(r?.message || 'Login failed', true);
+      }
+    }
+    async function adminLogout(){
+      if (TK_TOKEN) await api({event:'ADMIN_REVOKE_TOKEN', token: TK_TOKEN});
+      isAdmin = false;
+      TK_TOKEN = null;
+      localStorage.removeItem('twikoo_access_token');
+      updateAdminUI();
+      setStatus('Logged out');
+    }
+
     // Connection indicator
     async function checkConnection(){
       try{ await api({event:"GET_FUNC_VERSION"}); connEl.textContent="Status: Online"; connEl.classList.remove("bad"); connEl.classList.add("ok"); }
@@ -246,7 +321,6 @@
 
     // ===== Flatten server payload and rebuild threads =====
     function mergeList(list){
-      // Build a flat map from server payload. Twikoo returns top-level + 1-level replies.
       const temp = new Map();
 
       const pushItem = (src) => {
@@ -266,7 +340,6 @@
         });
       };
 
-      // 1) Collect top-level and their replies into the flat map
       (Array.isArray(list) ? list : []).forEach(top => {
         pushItem({ ...top, rid: "" });
         if (Array.isArray(top.replies)) {
@@ -274,7 +347,6 @@
         }
       });
 
-      // 2) Compute depth and parentNick via pid chain; normalize rid to the true root
       for (const obj of temp.values()){
         if ((obj.rid || "") === "") { obj.depth = 0; obj.parentNick = null; continue; }
 
@@ -282,7 +354,7 @@
         let p = temp.get(obj.pid);
         const seen = new Set([obj._id]);
         while (p && (p.rid || "") !== "") {
-          if (seen.has(p._id)) break; // guard
+          if (seen.has(p._id)) break;
           seen.add(p._id);
           depth++;
           p = temp.get(p.pid);
@@ -290,13 +362,11 @@
         obj.depth = depth;
         obj.parentNick = (temp.get(obj.pid)?.nick) || obj.ruser || null;
 
-        // Normalize rid to the top-level ancestor
         let root = obj;
         while (root && (root.rid || "") !== "") root = temp.get(root.pid);
         if (root) obj.rid = root._id;
       }
 
-      // 3) Rebuild root->children lists (all replies under their thread root)
       for (const o of temp.values()) o.children = [];
       for (const o of temp.values()){
         if ((o.rid || "") !== ""){
@@ -310,7 +380,6 @@
         }
       }
 
-      // 4) Commit to state
       state.all = temp;
       state.tops = Array.from(temp.values()).filter(x => (x.rid || "") === "");
       state.tops.sort((a,b)=>(b.created||0)-(a.created||0));
@@ -322,7 +391,28 @@
       const frag=document.createDocumentFragment();
       for (const c of state.tops){
         const node = renderMsg(c);
-        // add actions toggle next to Reply if there are replies
+
+        // Admin controls for top-level
+        if (isAdmin && (c.rid || '') === '') {
+          const actions = node.querySelector('.actions');
+          if (actions) {
+            const pinBtn = document.createElement('span');
+            pinBtn.className = 'action';
+            pinBtn.dataset.action = 'adminPin';
+            pinBtn.dataset.cid = c._id;
+            pinBtn.textContent = Number(c.top) === 1 ? 'Unpin' : 'Pin';
+            actions.appendChild(pinBtn);
+
+            const delBtn = document.createElement('span');
+            delBtn.className = 'action';
+            delBtn.dataset.action = 'adminDel';
+            delBtn.dataset.cid = c._id;
+            delBtn.textContent = 'Delete';
+            actions.appendChild(delBtn);
+          }
+        }
+
+        // Toggle replies button next to Reply (if children exist)
         const count = c.children?.length || 0;
         if (count > 0) {
           const actions = node.querySelector('.actions');
@@ -337,7 +427,8 @@
             actions.appendChild(toggleBtn);
           }
         }
-        // replies container under the main message
+
+        // Replies container under main bubble
         const cont = document.createElement("div");
         cont.className="replies";
         cont.id = "replies-"+c._id;
@@ -355,6 +446,8 @@
       messagesEl.appendChild(frag);
       if (state.tops.length) { loadMoreBtn.style.display="inline-flex"; loadMoreBtn.disabled=false; loadMoreBtn.textContent="Load older"; }
       else { loadMoreBtn.style.display="none"; }
+
+      updateAdminUI();
     }
 
     function renderMsg(c){
@@ -473,7 +566,6 @@
 
         const r = await api(payload);
         if (r && r.id){
-          // Auto-expand the thread so the new reply is visible
           if (pid){
             const rootToExpand = (rid && rid !== "") ? rid : pid;
             expanded.add(rootToExpand);
@@ -514,7 +606,6 @@
       const cid = commentEl?.dataset?.cid; if (!cid) return;
       const who = commentEl.querySelector('.nick')?.textContent || "someone";
       const obj = state.all.get(cid);
-      // If this is a reply, root is obj.rid; if top-level, root is its own id
       const rootId = obj ? ((obj.rid && obj.rid !== "") ? obj.rid : (obj._id || obj.id)) : cid;
       replyTarget = { _id: cid, rid: rootId, nick: who };
       replyName.textContent = who;
@@ -523,11 +614,36 @@
     }
     function clearReplyTarget(){ replyTarget=null; replyName.textContent=""; replyTo.style.display="none"; }
 
+    // Admin actions
+    async function adminTogglePin(id){
+      const item = state.all.get(id);
+      if (!item) return;
+      const wantTop = Number(item.top) === 1 ? 0 : 1;
+      const r = await api({event:'COMMENT_SET_FOR_ADMIN', id, set:{ top: wantTop }});
+      if (r && r.code === 0) {
+        await loadLatest();
+      } else {
+        setStatus(r?.message || 'Pin failed', true);
+      }
+    }
+    async function adminDelete(id){
+      const r = await api({event:'COMMENT_DELETE_FOR_ADMIN', id});
+      if (r && r.code === 0) {
+        await loadLatest();
+      } else {
+        setStatus(r?.message || 'Delete failed', true);
+      }
+    }
+
     // Events
     btnSend.addEventListener("click", sendMessage);
     btnAttach.addEventListener("click", attachImage);
     loadMoreBtn.addEventListener("click", loadOlder);
     replyCancel.addEventListener("click", clearReplyTarget);
+
+    if (btnAdminLogin) btnAdminLogin.addEventListener('click', adminLogin);
+    if (btnAdminLogout) btnAdminLogout.addEventListener('click', adminLogout);
+
     textEl.addEventListener("input", ()=>{
       const n=textEl.value.length; charCount.textContent=String(n);
       if (n>MAX_CHARS) setStatus(`Message too long. Max ${MAX_CHARS} characters.`, true);
@@ -538,11 +654,13 @@
       fileInfo.textContent = f ? `${f.name} · ${(f.size/1024/1024).toFixed(2)} MB` : "";
     });
 
-    // Delegate Reply / Toggle clicks
+    // Delegate actions
     messagesEl.addEventListener("click",(e)=>{
       const card = e.target.closest('.msg');
       const btn = e.target.closest('[data-action="reply"]');
       const toggle = e.target.closest('[data-action="toggleReplies"]');
+      const pin = e.target.closest('[data-action="adminPin"]');
+      const del = e.target.closest('[data-action="adminDel"]');
 
       if (btn && card){ setReplyTarget(card); return; }
 
@@ -565,7 +683,11 @@
         toggle.textContent = expanded.has(pid)
           ? (count===1 ? 'Close Reply' : 'Close Replies')
           : (count===1 ? 'Show Reply' : 'Show Replies');
+        return;
       }
+
+      if (pin) { adminTogglePin(pin.dataset.cid); return; }
+      if (del) { if (confirm('Delete this comment?')) adminDelete(del.dataset.cid); return; }
     });
 
     // Drag & drop image onto textarea
@@ -581,7 +703,16 @@
     });
 
     // Init
-    (async ()=>{ await checkConnection(); await loadLatest(); })();
+    (async ()=>{
+      if (localStorage.getItem('twikoo_access_token')) {
+        isAdmin = true;
+        adminPanel.style.display = 'grid';
+      }
+      revealAdminIfRequested();
+      updateAdminUI();
+      await checkConnection();
+      await loadLatest();
+    })();
   })();
   </script>
 </body>
