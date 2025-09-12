@@ -229,6 +229,10 @@
     };
     function fileToDataURL(file){ return new Promise((res,rej)=>{ const fr=new FileReader(); fr.onerror=()=>rej(fr.error||new Error("FileReader error")); fr.onload=()=>res(fr.result); fr.readAsDataURL(file); }); }
     function insertAtCursor(el,text){ const s=el.selectionStart??el.value.length, e=el.selectionEnd??el.value.length; el.value=el.value.slice(0,s)+text+el.value.slice(e); const pos=s+text.length; el.setSelectionRange(pos,pos); el.focus(); }
+    function isForbiddenNick(n){
+      const slug = String(n || '').toLowerCase().replace(/[^a-z0-9]/g,'');
+      return slug.includes('admin') || slug.includes('administrator');
+    }
     const showLbl = n => (n===1 ? 'Show Reply' : 'Show Replies');
     const closeLbl = n => (n===1 ? 'Close Reply' : 'Close Replies');
 
@@ -247,7 +251,7 @@
       catch{ connEl.textContent="Status: Offline"; connEl.classList.remove("ok"); connEl.classList.add("bad"); }
     }
 
-    // ===== State building (replies grouped under top-level) =====
+    // ===== State building (replies grouped by pid for deep nesting) =====
     function mergeList(list){
       // Flatten backend structure: top-level items may carry nested `replies`.
       const flat = [];
@@ -269,11 +273,12 @@
         state.all.set(id, { ...prev, ...c, _id:id, children:[] });
       }
 
-      // Rebuild children by rid -> root
+      // Rebuild true parent→child links using pid (not rid)
       for (const obj of state.all.values()) obj.children = [];
       for (const c of state.all.values()){
-        if (c.rid && c.rid !== ""){
-          const p = state.all.get(c.rid);
+        const parentId = (c.pid && c.pid !== "") ? c.pid : null;
+        if (parentId){
+          const p = state.all.get(parentId);
           if (p) p.children.push(c);
         }
       }
@@ -344,12 +349,22 @@
       const time=document.createElement("span"); time.textContent=new Date(c.created||Date.now()).toLocaleString();
       meta.append(nick,time);
 
+      // If this is a reply, show its parent nick
+      if (c.pid && c.pid !== ""){
+        const parentNick = state.all.get(c.pid)?.nick || "someone";
+        const inreply=document.createElement("span");
+        inreply.className="inreply";
+        inreply.textContent = `↪︎ ${parentNick}`;
+        meta.append(inreply);
+      }
+
       const content=document.createElement("div"); content.className="content"; content.innerHTML=c.comment||"";
 
       const actions=document.createElement("div"); actions.className="actions";
       const replyBtn=document.createElement("span"); replyBtn.className="action"; replyBtn.dataset.action="reply"; replyBtn.textContent="↩ Reply";
       actions.append(replyBtn);
 
+      // For top-level threads, the toggle chip is added in renderAll()
       bubble.append(meta,content,actions);
       wrap.append(avatar,bubble);
       return wrap;
@@ -359,7 +374,16 @@
     function buildReplies(container, parent){
       container.innerHTML="";
       const kids = (parent.children||[]).slice().sort((a,b)=>(a.created||0)-(b.created||0));
-      for (const ch of kids) container.appendChild(renderMsg(ch));
+      for (const ch of kids){
+        container.appendChild(renderMsg(ch));
+        if (Array.isArray(ch.children) && ch.children.length){
+          const nested = document.createElement("div");
+          nested.className = "replies";
+          nested.style.display = "flex"; // when a thread is open, show all nested
+          buildReplies(nested, ch);
+          container.appendChild(nested);
+        }
+      }
     }
 
     // ===== Loading =====
@@ -412,6 +436,7 @@
 
     async function sendMessage(){
       const nick = nickEl.value.trim() || "Anonymous";
+      if (isForbiddenNick(nick)){ setStatus("This nickname is not allowed.", true); return; }
       const html = textEl.value.trim();
       if (!html){ setStatus("Type a message first.", true); return; }
       if (html.length > MAX_CHARS){ setStatus(`Message too long. Max ${MAX_CHARS} characters.`, true); return; }
