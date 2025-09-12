@@ -473,6 +473,11 @@
 
         const r = await api(payload);
         if (r && r.id){
+          // Auto-expand the thread so the new reply is visible
+          if (pid){
+            const rootToExpand = (rid && rid !== "") ? rid : pid;
+            expanded.add(rootToExpand);
+          }
           textEl.value=""; charCount.textContent="0"; fileEl.value=""; fileInfo.textContent=""; clearReplyTarget();
           await loadLatest();
           setStatus("");
@@ -509,8 +514,9 @@
       const cid = commentEl?.dataset?.cid; if (!cid) return;
       const who = commentEl.querySelector('.nick')?.textContent || "someone";
       const obj = state.all.get(cid);
-      const rid = obj?.rid || "";
-      replyTarget = {_id: cid, rid, nick: who};
+      // If this is a reply, root is obj.rid; if top-level, root is its own id
+      const rootId = obj ? ((obj.rid && obj.rid !== "") ? obj.rid : (obj._id || obj.id)) : cid;
+      replyTarget = { _id: cid, rid: rootId, nick: who };
       replyName.textContent = who;
       replyTo.style.display = "inline-flex";
       textEl.focus();
