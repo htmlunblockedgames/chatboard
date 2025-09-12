@@ -56,12 +56,19 @@ function isForbiddenNick(nick){
   return s.includes('admin') || s.includes('administrator');
 }
 
-/* API with token persistence */
+/* API with token persistence – only store token on LOGIN */
 async function api(eventObj){
-  const body={...eventObj}; if (TK_TOKEN) body.accessToken=TK_TOKEN;
+  const body={...eventObj};
+  if (TK_TOKEN) body.accessToken=TK_TOKEN;
   const res=await fetch(WORKER_URL,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)});
   const json=await res.json().catch(()=>({}));
-  if (json && json.accessToken){ TK_TOKEN=json.accessToken; localStorage.setItem('twikoo_access_token',TK_TOKEN); }
+  if (body.event === 'LOGIN') {
+    const token = json && json.accessToken ? json.accessToken : (body.password || null);
+    if (token) {
+      TK_TOKEN = token;
+      localStorage.setItem('twikoo_access_token', TK_TOKEN);
+    }
+  }
   return json;
 }
 
@@ -87,7 +94,7 @@ function updateAdminUI(){
 }
 async function refreshAdminStatus(){
   const r = await api({event:'GET_CONFIG'});
-  isAdmin = !!(r && r.isAdmin);
+  isAdmin = !!(r && (r.isAdmin === true || (r.data && r.data.isAdmin === true) || r.admin === true));
   if (isAdmin) adminPanel.style.display='grid';
   updateAdminUI();
 }
@@ -96,9 +103,6 @@ async function adminLogin(){
   if (!pw) { setStatus('Enter password', true); return; }
   const r = await api({event:'LOGIN', password: pw});
   if (r && r.code === 0) {
-    // Twikoo admin = md5(accessToken) === ADMIN_PASS. Use the password as token.
-    TK_TOKEN = pw;
-    localStorage.setItem('twikoo_access_token', TK_TOKEN);
     await refreshAdminStatus();
     await loadLatest();
     setStatus('Admin logged in');
@@ -316,7 +320,6 @@ async function loadOlder(){
     const r = await api({event:"COMMENT_GET", url: PAGE_URL_PATH, before: earliestMainCreated});
     const data = Array.isArray(r?.data) ? r.data : [];
     if (data.length){
-      // Merge with existing
       const combined = [...Array.from(state.all.values()), ...data];
       mergeList(combined);
       renderAll();
@@ -350,7 +353,7 @@ function prettifyError(msg){
 async function sendMessage(){
   const nickRaw = nickEl.value.trim();
   const nick = nickRaw || "Anonymous";
-  if (isForbiddenNick(nick)) { setStatus("Nickname not allowed.", true); return; }
+  if (!isAdmin && isForbiddenNick(nick)) { setStatus("Nickname not allowed.", true); return; }
 
   const html = textEl.value.trim();
   if (!html){ setStatus("Type a message first.", true); return; }
@@ -505,9 +508,6 @@ textEl.addEventListener("drop", async e=>{
 
 /* Init */
 (async ()=>{
-  if (localStorage.getItem('twikoo_access_token')) {
-    adminPanel.style.display = 'grid';
-  }
   revealAdminIfRequested();
   await refreshAdminStatus();
   await checkConnection();
