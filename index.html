@@ -246,60 +246,75 @@
 
     // ===== Flatten server payload and rebuild threads =====
     function mergeList(list){
-      // Flatten server payload (top-level + nested replies) and compute depth and parentNick.
-      // Build state.all for every comment, then link root -> all replies via rid for counts/toggle.
-      if (!Array.isArray(list)) list = [];
+      // Build a flat map from server payload. Twikoo returns top-level + 1-level replies.
+      const temp = new Map();
 
-      const add = (node, depth = 0, parentNick = null, rootId = null) => {
-        const id = node._id || node.id;
-        if (!id) return;
-
-        // Root id for this thread
-        const root = depth === 0 ? id : (rootId || node.rid || '');
-
-        const item = {
-          ...node,
+      const pushItem = (src) => {
+        const id = src._id || src.id; if (!id) return;
+        temp.set(id, {
+          ...src,
           _id: id,
-          depth,
-          parentNick: parentNick || null,
-          // ensure rid is "" for root, otherwise fixed to the thread root id
-          rid: depth === 0 ? "" : root
-        };
-
-        const prev = state.all.get(id) || {};
-        state.all.set(id, { ...prev, ...item, children: [] });
-
-        // Recurse over nested replies if present
-        if (Array.isArray(node.replies) && node.replies.length){
-          for (const r of node.replies){
-            add(r, depth + 1, node.nick || "Anonymous", root);
-          }
-        }
+          pid: src.pid || "",
+          rid: src.rid || "",
+          created: src.created || Date.now(),
+          nick: src.nick || "Anonymous",
+          avatar: src.avatar || "",
+          comment: src.comment || "",
+          depth: 0,
+          parentNick: null,
+          children: []
+        });
       };
 
-      // Reset children links
-      for (const obj of state.all.values()) obj.children = [];
+      // 1) Collect top-level and their replies into the flat map
+      (Array.isArray(list) ? list : []).forEach(top => {
+        pushItem({ ...top, rid: "" });
+        if (Array.isArray(top.replies)) {
+          top.replies.forEach(r => pushItem(r));
+        }
+      });
 
-      // Add all top-level nodes and their nested replies
-      for (const c of list) add(c, 0, null, null);
+      // 2) Compute depth and parentNick via pid chain; normalize rid to the true root
+      for (const obj of temp.values()){
+        if ((obj.rid || "") === "") { obj.depth = 0; obj.parentNick = null; continue; }
 
-      // Rebuild root -> children mapping by rid
-      for (const obj of state.all.values()) obj.children = [];
-      for (const c of state.all.values()){
-        if ((c.rid || "") !== ""){
-          const root = state.all.get(c.rid);
-          if (root) root.children.push(c);
+        let depth = 1;
+        let p = temp.get(obj.pid);
+        const seen = new Set([obj._id]);
+        while (p && (p.rid || "") !== "") {
+          if (seen.has(p._id)) break; // guard
+          seen.add(p._id);
+          depth++;
+          p = temp.get(p.pid);
+        }
+        obj.depth = depth;
+        obj.parentNick = (temp.get(obj.pid)?.nick) || obj.ruser || null;
+
+        // Normalize rid to the top-level ancestor
+        let root = obj;
+        while (root && (root.rid || "") !== "") root = temp.get(root.pid);
+        if (root) obj.rid = root._id;
+      }
+
+      // 3) Rebuild root->children lists (all replies under their thread root)
+      for (const o of temp.values()) o.children = [];
+      for (const o of temp.values()){
+        if ((o.rid || "") !== ""){
+          const root = temp.get(o.rid);
+          if (root) root.children.push(o);
+        }
+      }
+      for (const root of temp.values()){
+        if (root.children && root.children.length){
+          root.children.sort((a,b)=>(a.created||0)-(b.created||0));
         }
       }
 
-      // Top-level items are those with no rid
-      state.tops = Array.from(state.all.values()).filter(x => (x.rid || "") === "");
+      // 4) Commit to state
+      state.all = temp;
+      state.tops = Array.from(temp.values()).filter(x => (x.rid || "") === "");
       state.tops.sort((a,b)=>(b.created||0)-(a.created||0));
-      if (state.tops.length){
-        earliestMainCreated = Math.min(...state.tops.map(x=>x.created||Date.now()));
-      } else {
-        earliestMainCreated = null;
-      }
+      earliestMainCreated = state.tops.length ? Math.min(...state.tops.map(x=>x.created||Date.now())) : null;
     }
 
     function renderAll(){
@@ -332,7 +347,8 @@
         } else {
           cont.style.display="none";
         }
-        node.appendChild(cont);
+        const bubbleForReplies = node.querySelector('.bubble');
+        (bubbleForReplies || node).appendChild(cont);
 
         frag.appendChild(node);
       }
