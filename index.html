@@ -248,12 +248,27 @@
 
     // ===== State building (replies grouped under top-level) =====
     function mergeList(list){
-      for (const c of list){
+      // Flatten backend structure: top-level items may carry nested `replies`.
+      const flat = [];
+      const pushFlat = (node) => {
+        if (!node) return;
+        const { replies, ...rest } = node;
+        flat.push(rest);
+        if (Array.isArray(replies) && replies.length){
+          for (const r of replies) pushFlat(r);
+        }
+      };
+      for (const c of (Array.isArray(list) ? list : [])) pushFlat(c);
+
+      // Upsert all items into the map
+      for (const c of flat){
         const id = c._id || c.id;
         if (!id) continue;
         const prev = state.all.get(id) || {};
         state.all.set(id, { ...prev, ...c, _id:id, children:[] });
       }
+
+      // Rebuild children by rid -> root
       for (const obj of state.all.values()) obj.children = [];
       for (const c of state.all.values()){
         if (c.rid && c.rid !== ""){
@@ -261,13 +276,15 @@
           if (p) p.children.push(c);
         }
       }
+
+      // Build ordered top-level list
       state.tops = Array.from(state.all.values()).filter(x => (x.rid||"")==="");
       state.tops.sort((a,b)=>(b.created||0)-(a.created||0));
-      if (state.tops.length){
-        earliestMainCreated = Math.min(...state.tops.map(x=>x.created||Date.now()));
-      } else {
-        earliestMainCreated = null;
-      }
+
+      // Track earliest main created for pagination
+      earliestMainCreated = state.tops.length
+        ? Math.min(...state.tops.map(x=>x.created||Date.now()))
+        : null;
     }
 
     function renderAll(){
