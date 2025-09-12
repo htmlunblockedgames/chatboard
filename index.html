@@ -111,23 +111,16 @@
     .content img{max-width:480px;border-radius:10px;border:1px solid var(--border);display:block;margin:8px 0;background:#fafafa}
 
     /* Actions */
-    .actions{display:flex;gap:8px;align-items:center;margin-top:8px}
+    .actions{display:flex;gap:14px;align-items:center;margin-top:8px;flex-wrap:wrap}
     .action{
       font-size:12px;color:var(--accent);cursor:pointer;font-weight:800;
       background:#fdfdfd;border:1px solid var(--border-2);padding:6px 10px;border-radius:999px;
+      user-select:none;
     }
     .action:hover{background:#f8f8f8}
 
-    /* Replies toggle bar + container.
-       Use CSS vars so nested replies indent progressively. */
-    .replies{
-      display:none; /* default hidden */
-      margin-top:10px;
-      --indent: 0px; /* base indent. nested .replies increase this via inheritance */
-      flex-direction:column; gap:10px;
-    }
-    .replies .replies { --indent: calc(var(--indent) + 20px); }
-    .replies .msg { margin-left: var(--indent); }
+    /* Replies container under each top-level */
+    .replies{display:none; margin-top:10px; padding-left:0; display:flex; flex-direction:column; gap:10px}
 
     /* Load older – full bubble width */
     #loadMore{
@@ -227,17 +220,14 @@
     function fileToDataURL(file){ return new Promise((res,rej)=>{ const fr=new FileReader(); fr.onerror=()=>rej(fr.error||new Error("FileReader error")); fr.onload=()=>res(fr.result); fr.readAsDataURL(file); }); }
     function insertAtCursor(el,text){ const s=el.selectionStart??el.value.length, e=el.selectionEnd??el.value.length; el.value=el.value.slice(0,s)+text+el.value.slice(e); const pos=s+text.length; el.setSelectionRange(pos,pos); el.focus(); }
 
-    // client-side safe admin-blocking (handles leet/obfuscation)
-    function isForbiddenNick(n){
-      const map = {'0':'o','@':'a','4':'a','3':'e','5':'s','$':'s','7':'t','+':'t','!':'i','1':'i','l':'i','|':'i'}
-      const raw = String(n||'') .toLowerCase()
-      const mapped = raw.split('').map(ch => map[ch] || ch).join('')
-      const slug = mapped.replace(/[^a-z0-9]/g,'')
-      return slug.includes('admin') || slug.includes('administrator')
+    // Client-side nickname guard mirroring server rules
+    function isForbiddenNick(nick){
+      if (!nick) return false;
+      const subs = { '0':'o','1':'i','!':'i','|':'i','l':'i','3':'e','4':'a','5':'s','7':'t','@':'a','$':'s' };
+      let s = String(nick).toLowerCase();
+      s = s.replace(/[0l1!|3 4 5 7@$]/g, ch => subs[ch] || ch).replace(/[^a-z]/g,'');
+      return s.includes('admin') || s.includes('administrator');
     }
-
-    const showLbl = n => (n===1 ? 'Show Reply' : 'Show Replies');
-    const closeLbl = n => (n===1 ? 'Close Reply' : 'Close Replies');
 
     // API with token persistence
     async function api(eventObj){
@@ -254,46 +244,29 @@
       catch{ connEl.textContent="Status: Offline"; connEl.classList.remove("ok"); connEl.classList.add("bad"); }
     }
 
-    // ===== State building (replies grouped by pid for deep nesting) =====
+    // ===== State building (group by rid at top-level; depth comes from server) =====
     function mergeList(list){
-      // Flatten backend structure: top-level items may carry nested `replies`.
-      const flat = [];
-      const pushFlat = (node) => {
-        if (!node) return;
-        const { replies, ...rest } = node;
-        flat.push(rest);
-        if (Array.isArray(replies) && replies.length){
-          for (const r of replies) pushFlat(r);
-        }
-      };
-      for (const c of (Array.isArray(list) ? list : [])) pushFlat(c);
-
-      // Upsert all items into the map
-      for (const c of flat){
+      for (const c of list){
         const id = c._id || c.id;
         if (!id) continue;
         const prev = state.all.get(id) || {};
         state.all.set(id, { ...prev, ...c, _id:id, children:[] });
       }
-
-      // Rebuild true parent→child links using pid (not rid)
+      // clear children then re-link by rid (root id)
       for (const obj of state.all.values()) obj.children = [];
       for (const c of state.all.values()){
-        const parentId = (c.pid && c.pid !== "") ? c.pid : null;
-        if (parentId){
-          const p = state.all.get(parentId);
+        if (c.rid && c.rid !== ""){
+          const p = state.all.get(c.rid);
           if (p) p.children.push(c);
         }
       }
-
-      // Build ordered top-level list
       state.tops = Array.from(state.all.values()).filter(x => (x.rid||"")==="");
       state.tops.sort((a,b)=>(b.created||0)-(a.created||0));
-
-      // Track earliest main created for pagination
-      earliestMainCreated = state.tops.length
-        ? Math.min(...state.tops.map(x=>x.created||Date.now()))
-        : null;
+      if (state.tops.length){
+        earliestMainCreated = Math.min(...state.tops.map(x=>x.created||Date.now()));
+      } else {
+        earliestMainCreated = null;
+      }
     }
 
     function renderAll(){
@@ -301,36 +274,33 @@
       const frag=document.createDocumentFragment();
       for (const c of state.tops){
         const node = renderMsg(c);
-        const count = (c.children?.length)||0;
-
-        // Replies container lives under each card
+        // add actions toggle next to Reply if there are replies
+        const count = c.children?.length || 0;
+        if (count > 0) {
+          const actions = node.querySelector('.actions');
+          if (actions) {
+            const toggleBtn = document.createElement('span');
+            toggleBtn.className = 'action';
+            toggleBtn.dataset.action = 'toggleReplies';
+            toggleBtn.dataset.parent = c._id;
+            toggleBtn.textContent = expanded.has(c._id)
+              ? (count===1 ? 'Close Reply' : 'Close Replies')
+              : (count===1 ? 'Show Reply' : 'Show Replies');
+            actions.appendChild(toggleBtn);
+          }
+        }
+        // replies container under the main message
         const cont = document.createElement("div");
         cont.className="replies";
         cont.id = "replies-"+c._id;
-
         if (expanded.has(c._id)) {
-          if (count>0) buildReplies(cont, c);
+          buildReplies(cont, c);
           cont.style.display="flex";
         } else {
           cont.style.display="none";
         }
-
-        // Add toggle next to the Reply button only when there is at least one reply
-        if (count>0){
-          const actions = node.querySelector('.actions');
-          if (actions){
-            const toggleBtn = document.createElement('span');
-            toggleBtn.className='action';
-            toggleBtn.dataset.action='toggle-thread';
-            toggleBtn.dataset.parent=c._id;
-            toggleBtn.setAttribute('role','button');
-            toggleBtn.setAttribute('tabindex','0');
-            toggleBtn.textContent = expanded.has(c._id) ? closeLbl(count) : showLbl(count);
-            actions.append(toggleBtn);
-          }
-        }
-
         node.appendChild(cont);
+
         frag.appendChild(node);
       }
       messagesEl.appendChild(frag);
@@ -347,22 +317,25 @@
       else { avatar.textContent = initialOf(c.nick); }
 
       const bubble=document.createElement("div"); bubble.className="bubble";
+      const depth = Number(c.depth || 0);
+      bubble.style.marginLeft = (depth * 20) + 'px';
+
       const meta=document.createElement("div"); meta.className="meta";
       const nick=document.createElement("span"); nick.className="nick"; nick.textContent=c.nick||"Anonymous";
       const time=document.createElement("span"); time.textContent=new Date(c.created||Date.now()).toLocaleString();
       meta.append(nick,time);
 
-      // If this is a reply, show its parent nick
-      if (c.pid && c.pid !== ""){
-        const parentNick = state.all.get(c.pid)?.nick || "someone";
-        const inreply=document.createElement("span");
-        inreply.className="inreply";
-        inreply.style.marginLeft = "8px";
-        inreply.textContent = `↪︎ ${parentNick}`;
-        meta.append(inreply);
+      const content=document.createElement("div"); content.className="content";
+      if (c.parentNick) {
+        const replyToSpan = document.createElement('div');
+        replyToSpan.style.fontSize='12px';
+        replyToSpan.style.color='var(--muted)';
+        replyToSpan.textContent = `↪ Replying to ${c.parentNick}`;
+        content.appendChild(replyToSpan);
       }
-
-      const content=document.createElement("div"); content.className="content"; content.innerHTML=c.comment||"";
+      const contentBody = document.createElement('div');
+      contentBody.innerHTML=c.comment||"";
+      content.appendChild(contentBody);
 
       const actions=document.createElement("div"); actions.className="actions";
       const replyBtn=document.createElement("span"); replyBtn.className="action"; replyBtn.dataset.action="reply"; replyBtn.textContent="↩ Reply";
@@ -373,20 +346,10 @@
       return wrap;
     }
 
-
     function buildReplies(container, parent){
       container.innerHTML="";
       const kids = (parent.children||[]).slice().sort((a,b)=>(a.created||0)-(b.created||0));
-      for (const ch of kids){
-        container.appendChild(renderMsg(ch));
-        if (Array.isArray(ch.children) && ch.children.length){
-          const nested = document.createElement("div");
-          nested.className = "replies";
-          nested.style.display = "flex"; // when a thread is open, show all nested
-          buildReplies(nested, ch);
-          container.appendChild(nested);
-        }
-      }
+      for (const ch of kids) container.appendChild(renderMsg(ch));
     }
 
     // ===== Loading =====
@@ -438,8 +401,10 @@
     }
 
     async function sendMessage(){
-      const nick = nickEl.value.trim() || "Anonymous";
-      if (isForbiddenNick(nick)){ setStatus("This nickname is not allowed.", true); return; }
+      const nickRaw = nickEl.value.trim();
+      const nick = nickRaw || "Anonymous";
+      if (isForbiddenNick(nick)) { setStatus("Nickname not allowed.", true); return; }
+
       const html = textEl.value.trim();
       if (!html){ setStatus("Type a message first.", true); return; }
       if (html.length > MAX_CHARS){ setStatus(`Message too long. Max ${MAX_CHARS} characters.`, true); return; }
@@ -459,8 +424,6 @@
 
         const r = await api(payload);
         if (r && r.id){
-          // auto-open the thread you replied to (YouTube-like behavior)
-          if (rid) expanded.add(rid);
           textEl.value=""; charCount.textContent="0"; fileEl.value=""; fileInfo.textContent=""; clearReplyTarget();
           await loadLatest();
           setStatus("");
@@ -483,7 +446,7 @@
         const dataURL = await fileToDataURL(f);
         const r = await api({event:"UPLOAD_IMAGE", photo:dataURL});
         if (r?.code===0 && r?.data?.url){
-          insertAtCursor(textEl, `\\n<img src=\"${r.data.url}\" alt=\"\">\\n`);
+          insertAtCursor(textEl, `\n<img src="${r.data.url}" alt="">\n`);
           charCount.textContent = String(textEl.value.length);
           setStatus("");
         }else{
@@ -510,44 +473,44 @@
     btnAttach.addEventListener("click", attachImage);
     loadMoreBtn.addEventListener("click", loadOlder);
     replyCancel.addEventListener("click", clearReplyTarget);
-    textEl.addEventListener("input", ()=>{ const n=textEl.value.length; charCount.textContent=String(n); if (n>MAX_CHARS) setStatus(`Message too long. Max ${MAX_CHARS} characters.`, true); else if (statusEl.textContent.startsWith("Message too long")) setStatus(""); });
-    fileEl.addEventListener("change", ()=>{ const f=fileEl.files&&fileEl.files[0]; fileInfo.textContent = f ? `${f.name} · ${(f.size/1024/1024).toFixed(2)} MB` : ""; });
+    textEl.addEventListener("input", ()=>{
+      const n=textEl.value.length; charCount.textContent=String(n);
+      if (n>MAX_CHARS) setStatus(`Message too long. Max ${MAX_CHARS} characters.`, true);
+      else if (statusEl.textContent.startsWith("Message too long")) setStatus("");
+    });
+    fileEl.addEventListener("change", ()=>{
+      const f=fileEl.files&&fileEl.files[0];
+      fileInfo.textContent = f ? `${f.name} · ${(f.size/1024/1024).toFixed(2)} MB` : "";
+    });
 
     // Delegate Reply / Toggle clicks
     messagesEl.addEventListener("click",(e)=>{
       const card = e.target.closest('.msg');
-      const replyBtn = e.target.closest('[data-action=\"reply\"]');
-      const toggleBtn = e.target.closest('[data-action=\"toggle-thread\"]');
+      const btn = e.target.closest('[data-action="reply"]');
+      const toggle = e.target.closest('[data-action="toggleReplies"]');
 
-      if (replyBtn && card){ setReplyTarget(card); return; }
+      if (btn && card){ setReplyTarget(card); return; }
 
-      if (toggleBtn){
-        const pid = toggleBtn.dataset.parent;
+      if (toggle){
+        const pid = toggle.dataset.parent;
         if (!pid) return;
         const cont = document.getElementById("replies-"+pid);
         const parent = state.all.get(pid);
         if (!cont || !parent) return;
 
-        const open = expanded.has(pid);
-        const count = (parent.children||[]).length;
-
-        if (open){
+        if (expanded.has(pid)){
           cont.style.display="none";
           expanded.delete(pid);
-          toggleBtn.textContent = showLbl(count);
         }else{
           if (!cont.childElementCount) buildReplies(cont, parent);
           cont.style.display="flex";
           expanded.add(pid);
-          toggleBtn.textContent = closeLbl(count);
         }
+        const count = parent.children?.length || 0;
+        toggle.textContent = expanded.has(pid)
+          ? (count===1 ? 'Close Reply' : 'Close Replies')
+          : (count===1 ? 'Show Reply' : 'Show Replies');
       }
-    });
-
-    // Keyboard support for the toggle
-    messagesEl.addEventListener("keydown",(e)=>{
-      const toggleBtn = e.target.closest('[data-action=\"toggle-thread\"]');
-      if (toggleBtn && (e.key==='Enter' || e.key===' ')){ e.preventDefault(); toggleBtn.click(); }
     });
 
     // Drag & drop image onto textarea
