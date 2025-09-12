@@ -115,17 +115,22 @@
     .action{
       font-size:12px;color:var(--accent);cursor:pointer;font-weight:800;
       background:#fdfdfd;border:1px solid var(--border-2);padding:6px 10px;border-radius:999px;
-      user-select:none;
     }
     .action:hover{background:#f8f8f8}
 
     /* Replies toggle bar + container */
     .replies-bar{
-      margin-top:8px; display:flex; align-items:center; justify-content:flex-start; gap:10px;
+      margin-top:8px; display:inline-flex; align-items:center; gap:8px;
       background:#f6f9ff; border:1px dashed #cfe1ff; color:#0280ca;
       padding:8px 10px; border-radius:10px; font-size:12px; cursor:pointer; user-select:none;
     }
-    .replies{display:none; margin-top:10px; padding-left:52px; display:flex; flex-direction:column; gap:10px}
+    .replies-bar .caret{display:inline-block;transition:transform .15s ease}
+    .replies-bar[aria-expanded="true"] .caret{transform:rotate(90deg)}
+    .replies{
+      display:none; /* fixed: default hidden */
+      margin-top:10px; padding-left:52px;
+      flex-direction:column; gap:10px;
+    }
 
     /* Load older – full bubble width */
     #loadMore{
@@ -224,6 +229,7 @@
     };
     function fileToDataURL(file){ return new Promise((res,rej)=>{ const fr=new FileReader(); fr.onerror=()=>rej(fr.error||new Error("FileReader error")); fr.onload=()=>res(fr.result); fr.readAsDataURL(file); }); }
     function insertAtCursor(el,text){ const s=el.selectionStart??el.value.length, e=el.selectionEnd??el.value.length; el.value=el.value.slice(0,s)+text+el.value.slice(e); const pos=s+text.length; el.setSelectionRange(pos,pos); el.focus(); }
+    const viewLabel=(n,open)=> open?`Hide replies (${n})`:(n===1?`View 1 reply`:`View ${n} replies`);
 
     // API with token persistence
     async function api(eventObj){
@@ -269,24 +275,29 @@
       const frag=document.createDocumentFragment();
       for (const c of state.tops){
         const node = renderMsg(c);
-        // replies bar
-        if (Array.isArray(c.children) && c.children.length){
-          node.appendChild(renderRepliesBar(c));
-          // replies container (toggle)
+
+        const count = (c.children?.length)||0;
+        if (count>0){
+          const bar = renderRepliesBar(c);
+          node.appendChild(bar);
+
           const cont = document.createElement("div");
           cont.className="replies";
           cont.id = "replies-"+c._id;
           if (expanded.has(c._id)) {
             buildReplies(cont, c);
             cont.style.display="flex";
+            bar.setAttribute('aria-expanded','true');
+            bar.querySelector('.label').textContent = viewLabel(count,true);
           } else {
             cont.style.display="none";
+            bar.setAttribute('aria-expanded','false');
+            bar.querySelector('.label').textContent = viewLabel(count,false);
           }
           node.appendChild(cont);
-        } else {
-          // no replies bar, but still allow replying
-          node.appendChild(renderRepliesBar(c, true));
         }
+        // no bar if no replies (cleaner, YouTube-style)
+
         frag.appendChild(node);
       }
       messagesEl.appendChild(frag);
@@ -319,20 +330,23 @@
       return wrap;
     }
 
-    function renderRepliesBar(parent, noReplies=false){
+    function renderRepliesBar(parent){
       const bar=document.createElement("div");
       bar.className="replies-bar";
       bar.dataset.action="toggleReplies";
       bar.dataset.parent = parent._id;
-      const count = parent.children?.length || 0;
-      if (noReplies) {
-        bar.textContent = "No replies yet • Click ‘Reply’ to start a thread";
-        bar.style.cursor="default";
-        bar.dataset.action=""; // disable toggle when none
-      } else {
-        const isOpen = expanded.has(parent._id);
-        bar.textContent = isOpen ? `Hide replies (${count})` : `Show replies (${count})`;
-      }
+      bar.setAttribute('role','button');
+      bar.setAttribute('tabindex','0');
+
+      const caret=document.createElement('span');
+      caret.className='caret';
+      caret.textContent='▸';
+
+      const label=document.createElement('span');
+      label.className='label';
+      label.textContent='View replies';
+
+      bar.append(caret,label);
       return bar;
     }
 
@@ -411,6 +425,8 @@
 
         const r = await api(payload);
         if (r && r.id){
+          // auto-open the thread you replied to (YouTube-like behavior)
+          if (rid) expanded.add(rid);
           textEl.value=""; charCount.textContent="0"; fileEl.value=""; fileInfo.textContent=""; clearReplyTarget();
           await loadLatest();
           setStatus("");
@@ -478,17 +494,28 @@
         const parent = state.all.get(pid);
         if (!cont || !parent) return;
 
-        if (expanded.has(pid)){
+        const open = expanded.has(pid);
+        const count = (parent.children||[]).length;
+
+        if (open){
           cont.style.display="none";
           expanded.delete(pid);
-          toggle.textContent = `Show replies (${(parent.children||[]).length})`;
+          toggle.setAttribute('aria-expanded','false');
+          toggle.querySelector('.label').textContent = viewLabel(count,false);
         }else{
           if (!cont.childElementCount) buildReplies(cont, parent);
           cont.style.display="flex";
           expanded.add(pid);
-          toggle.textContent = `Hide replies (${(parent.children||[]).length})`;
+          toggle.setAttribute('aria-expanded','true');
+          toggle.querySelector('.label').textContent = viewLabel(count,true);
         }
       }
+    });
+
+    // Keyboard support for the toggle
+    messagesEl.addEventListener("keydown",(e)=>{
+      const toggle = e.target.closest('.replies-bar');
+      if (toggle && (e.key==='Enter' || e.key===' ')){ e.preventDefault(); toggle.click(); }
     });
 
     // Drag & drop image onto textarea
