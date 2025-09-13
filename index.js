@@ -1,6 +1,6 @@
 /* Poly Track Chatboard – index.js */
 /* Works with the provided index.html structure and Twikoo Worker backend */
-console.log("chatboard.index.js v3");
+console.log("chatboard.index.js v4");
 
 /* ===== Configure if you move host/path ===== */
 const WORKER_URL    = "https://twikoo-cloudflare.ertertertet07.workers.dev";
@@ -58,18 +58,23 @@ function isForbiddenNick(nick){
   return s.includes('admin') || s.includes('administrator');
 }
 
-/* API with token persistence – only store token on LOGIN */
+/* API with token persistence and compatibility headers */
 async function api(eventObj){
-  const body={...eventObj};
-  if (TK_TOKEN) body.accessToken=TK_TOKEN;
-  const res=await fetch(WORKER_URL,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)});
-  const json=await res.json().catch(()=>({}));
-  if (body.event === 'LOGIN') {
-    const token = json && json.accessToken ? json.accessToken : (body.password || null);
-    if (token) {
-      TK_TOKEN = token;
-      localStorage.setItem('twikoo_access_token', TK_TOKEN);
-    }
+  const body = { ...eventObj };
+  // Twikoo admin ops expect URL; safe to send always
+  if (body.url == null) body.url = PAGE_URL_PATH;
+  // attach token in multiple ways for compatibility
+  if (TK_TOKEN) { body.accessToken = TK_TOKEN; body.token = TK_TOKEN; }
+  const headers = { "content-type": "application/json" };
+  if (TK_TOKEN) headers["x-access-token"] = TK_TOKEN;
+
+  const res = await fetch(WORKER_URL, { method: "POST", headers, body: JSON.stringify(body) });
+  const json = await res.json().catch(() => ({}));
+
+  // persist token only when server returns one from LOGIN
+  if (body.event === 'LOGIN' && json && json.accessToken) {
+    TK_TOKEN = json.accessToken;
+    localStorage.setItem('twikoo_access_token', TK_TOKEN);
   }
   return json;
 }
@@ -96,7 +101,9 @@ function updateAdminUI(){
 }
 async function refreshAdminStatus(){
   const r = await api({event:'GET_CONFIG'});
-  const adminFlag = r && (truthy(r.isAdmin) || truthy(r.admin) || (r.data && (truthy(r.data.isAdmin) || truthy(r.data.admin))));
+  const adminFlag = r && (truthy(r.isAdmin) || truthy(r.admin) ||
+                          (r.data && (truthy(r.data.isAdmin) || truthy(r.data.admin))) ||
+                          (r.config && (truthy(r.config.IS_ADMIN) || truthy(r.config.is_admin))));
   const cached = (localStorage.getItem('twikoo_is_admin') === '1') && !!TK_TOKEN;
   isAdmin = !!(adminFlag || cached);
   const q = new URLSearchParams(location.search);
@@ -157,14 +164,11 @@ function mergeList(list){
 
   (Array.isArray(list) ? list : []).forEach(top => {
     pushItem({ ...top, rid: "" });
-    if (Array.isArray(top.replies)) {
-      top.replies.forEach(r => pushItem(r));
-    }
+    if (Array.isArray(top.replies)) top.replies.forEach(r => pushItem(r));
   });
 
   for (const obj of temp.values()){
     if ((obj.rid || "") === "") { obj.depth = 0; obj.parentNick = null; continue; }
-
     let depth = 1;
     let p = temp.get(obj.pid);
     const seen = new Set([obj._id]);
@@ -440,12 +444,12 @@ async function adminTogglePin(id){
   const currentPinned = state.tops.filter(x => Number(x.top) === 1).length;
   const wantTop = Number(item.top) === 1 ? 0 : 1;
   if (wantTop === 1 && currentPinned >= 3) { setStatus("Pin limit reached (3). Unpin something first.", true); return; }
-  const r = await api({event:'COMMENT_SET_FOR_ADMIN', id, set:{ top: wantTop }});
+  const r = await api({event:'COMMENT_SET_FOR_ADMIN', url: PAGE_URL_PATH, id, set:{ top: wantTop }});
   if (r && r.code === 0) await loadLatest();
   else setStatus(r?.message || 'Pin failed', true);
 }
 async function adminDelete(id){
-  const r = await api({event:'COMMENT_DELETE_FOR_ADMIN', id});
+  const r = await api({event:'COMMENT_DELETE_FOR_ADMIN', url: PAGE_URL_PATH, id});
   if (r && r.code === 0) await loadLatest();
   else setStatus(r?.message || 'Delete failed', true);
 }
