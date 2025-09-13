@@ -28,6 +28,7 @@ const replyTo=$("replyTo"), replyName=$("replyName"), replyCancel=$("replyCancel
 /* State */
 let TK_TOKEN = localStorage.getItem('twikoo_access_token') || null;
 const state = { all:new Map(), tops:[] }; // id -> comment, plus tops[]
+let serverCounts = null; // totals from server for accurate stats
 let loading=false;
 let earliestMainCreated=null; // smallest created among current top-levels
 let replyTarget=null; // {_id, rid, nick}
@@ -59,7 +60,7 @@ function parseRetryAfter(h){
   return Number.isNaN(d) ? 0 : d;
 }
 
-/* Minimal safe renderer: allows <img>, <a>, <br>; text for everything else */
+/* Minimal safe renderer */
 function renderSafeContent(input){
   const text = String(input ?? "");
   const tpl = document.createElement('template');
@@ -117,7 +118,7 @@ function isForbiddenNick(nick){
   return s.includes('admin') || s.includes('administrator');
 }
 
-/* API with token persistence, idempotent retries, and 429 handling */
+/* API with token persistence, retries, 429 handling */
 async function api(eventObj){
   const body = { ...eventObj };
   if (body.url == null) body.url = PAGE_URL_PATH;
@@ -205,21 +206,33 @@ function revealAdminIfRequested(){
   }
 }
 function updateAdminUI(){
-  const pinned = state.tops.filter(x => Number(x.top) === 1).length;
-  pinCountEl.textContent = String(pinned);
+  const counts = serverCounts;
 
-  // Stats
-  if (statTotalEl && statRepliesEl && statTodayEl){
-    const total = state.all.size;
-    const tops = state.tops.length;
-    const replies = Math.max(0, total - tops);
-    const startOfDay = new Date(); startOfDay.setHours(0,0,0,0);
-    let today = 0;
-    for (const v of state.all.values()) if (Number(v.created||0) >= startOfDay.getTime()) today++;
-    statTotalEl.textContent = String(total);
-    statRepliesEl.textContent = String(replies);
-    statTodayEl.textContent = String(today);
-  }
+  const pinned = (counts && typeof counts.pinned === 'number')
+    ? counts.pinned
+    : state.tops.filter(x => Number(x.top) === 1).length;
+
+  const total = (counts && typeof counts.total === 'number')
+    ? counts.total
+    : state.all.size;
+
+  const replies = (counts && typeof counts.replies === 'number')
+    ? counts.replies
+    : Math.max(0, state.all.size - state.tops.length);
+
+  const today = (counts && typeof counts.today === 'number')
+    ? counts.today
+    : (() => {
+        const startOfDay = new Date(); startOfDay.setHours(0,0,0,0);
+        let t = 0;
+        for (const v of state.all.values()) if (Number(v.created||0) >= startOfDay.getTime()) t++;
+        return t;
+      })();
+
+  pinCountEl.textContent = String(pinned);
+  if (statTotalEl)   statTotalEl.textContent = String(total);
+  if (statRepliesEl) statRepliesEl.textContent = String(replies);
+  if (statTodayEl)   statTodayEl.textContent = String(today);
 
   if (isAdmin) {
     adminLoginRow.style.display = 'none';
@@ -285,7 +298,7 @@ async function checkConnection(){
   }
 }
 
-/* ===== Flatten server payload and rebuild threads ===== */
+/* ===== Flatten & rebuild threads ===== */
 function mergeList(list){
   const temp = new Map();
 
@@ -346,7 +359,6 @@ function mergeList(list){
 
   state.all = temp;
   state.tops = Array.from(temp.values()).filter(x => (x.rid || "") === "");
-  // PINNED FIRST, then newest
   state.tops.sort((a,b)=> (Number(b.top||0) - Number(a.top||0)) || (b.created||0)-(a.created||0));
   earliestMainCreated = state.tops.length ? Math.min(...state.tops.map(x=>x.created||Date.now())) : null;
 }
@@ -419,7 +431,6 @@ function renderMsg(c){
     replyToSpan.textContent = `↪ Replying to ${c.parentNick}`;
     content.appendChild(replyToSpan);
   }
-  // Render message body (allow <img>, <a>, <br>)
   const contentBody = renderSafeContent(c.comment || "");
   content.appendChild(contentBody);
 
@@ -476,6 +487,14 @@ async function loadLatest(){
       pid: row.pid || '',
       rid: row.rid || ''
     }));
+
+    // Save server-side counts for accurate admin stats
+    if (r && r.data && r.data.counts) {
+      serverCounts = r.data.counts;
+    } else if (r && typeof r?.data?.count === 'number') {
+      serverCounts = { total: Number(r.data.count) };
+    }
+
     mergeList(list);
     renderAll();
     if (r && r.more === false) { loadMoreBtn.style.display="none"; }
@@ -505,6 +524,13 @@ async function loadOlder(){
       pid: row.pid || '',
       rid: row.rid || ''
     }));
+
+    if (r && r.data && r.data.counts) {
+      serverCounts = r.data.counts;
+    } else if (r && typeof r?.data?.count === 'number') {
+      serverCounts = { total: Number(r.data.count) };
+    }
+
     if (data.length){
       const combined = [...Array.from(state.all.values()), ...data];
       mergeList(combined);
