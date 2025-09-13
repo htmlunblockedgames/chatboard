@@ -72,6 +72,7 @@ let rateBlockedUntil = 0;
 const flashedOnce = new Set();
 let allowReplies = true; // global toggle
 let allowPosts = true;   // when false, only admin may post
+const devAnimStartAt = new Map(); // per-session start times for unpinned admin glow
 
 limitMbEl.textContent=MAX_FILE_MB;
 limitChars.textContent=MAX_CHARS;
@@ -372,11 +373,31 @@ function applyTextGlowOnce(el){
   };
   el.addEventListener('animationend', done);
 }
+
+function applyTextGlowRemainder(el, c){
+  if (!el || !c) return;
+  const w = el.scrollWidth || el.getBoundingClientRect().width || 0;
+  const pxPerSec = 250; // constant speed for long messages
+  const durSec = Math.max(2, w / pxPerSec);
+  const created = Number(c.created || 0);
+  const elapsed = Math.max(0, (Date.now() - created) / 1000);
+  const remain = Math.max(0, durSec - elapsed);
+  if (remain <= 0.05) return;
+  el.classList.add('glow-text');
+  el.style.setProperty('--glow-dur', remain + 's');
+  const done = () => {
+    el.classList.remove('glow-text');
+    el.classList.add('glow-fade');
+    el.style.removeProperty('--glow-dur');
+    el.removeEventListener('animationend', done);
+    setTimeout(() => { try { el.classList.remove('glow-fade'); } catch {} }, 400);
+  };
+  el.addEventListener('animationend', done);
+}
+
 function shouldGlow(c){
-  const now = Date.now();
-  const isRecent = (now - Number(c.created || 0)) <= 5000; // last 5s
-  const isDevPinned = authorIsAdmin(c) && Number(c.top) === 1 && ((c.rid || "") === ""); // admin + pinned root
-  return isDevPinned || isRecent;
+  // Deprecated: we now glow only for admin messages via render-time logic.
+  return false;
 }
 
 
@@ -417,12 +438,29 @@ function renderMsg(c){
   body.classList.add('glow-target');
   content.appendChild(body);
 
-  // Conditionally apply glow (dev pinned always; messages from last 5s)
-  if (shouldGlow(c)) applyTextGlowOnce(body);
-
-  if (adminAuthor && !flashedOnce.has(cid)) {
-    // relying on text sweep only
-    flashedOnce.add(cid);
+  // Admin-only glow rules:
+  // - Pinned root (admin): animate once per session (sessionStorage).
+  // - Unpinned admin: animate once; if re-rendered, continue only the remaining portion.
+  if (adminAuthor) {
+    const isPinnedRoot = Number(c.top) === 1 && ((c.rid || "") === "");
+    if (isPinnedRoot) {
+      const key = "pinAnim:" + cid;
+      if (!sessionStorage.getItem(key)) {
+        applyTextGlowOnce(body);
+        try { sessionStorage.setItem(key, "1"); } catch {}
+      }
+    } else {
+      const now = Date.now();
+      const lastStart = devAnimStartAt.get(cid) || 0;
+      // throttle restarts to once every 3s
+      if (now - lastStart >= 3000) {
+        applyTextGlowRemainder(body, c);
+        devAnimStartAt.set(cid, now);
+      } else {
+        // if animation started recently, only try to continue the remainder
+        applyTextGlowRemainder(body, c);
+      }
+    }
   }
 
   const actions=document.createElement("div"); actions.className="actions";
