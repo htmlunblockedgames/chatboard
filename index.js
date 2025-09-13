@@ -219,8 +219,41 @@ async function adminLogout(){
 
 /* Connection indicator */
 async function checkConnection(){
-  try{ await api({event:"GET_FUNC_VERSION"}); connEl.textContent="Status: Online"; connEl.classList.remove("bad"); connEl.classList.add("ok"); }
-  catch{ connEl.textContent="Status: Offline"; connEl.classList.remove("ok"); connEl.classList.add("bad"); }
+  try{
+    // if we are currently rate-limited, show remaining wait time immediately
+    if (Date.now() < rateBlockedUntil){
+      const secs = Math.ceil((rateBlockedUntil - Date.now())/1000);
+      connEl.textContent = `Status: Rate limited (${secs}s)`;
+      connEl.classList.remove("ok"); connEl.classList.add("bad");
+      setStatus(`API rate limit. Wait ${secs}s`, true);
+      console.debug('checkConnection: suppressed due to client-side rateBlockedUntil', {rateBlockedUntil, secs});
+      return false;
+    }
+
+    // make the GET_FUNC_VERSION call and surface the response for debugging
+    const res = await api({event:"GET_FUNC_VERSION"});
+    console.debug('checkConnection GET_FUNC_VERSION response', res);
+
+    connEl.textContent = "Status: Online";
+    connEl.classList.remove("bad"); connEl.classList.add("ok");
+    setStatus('');
+    return true;
+  }catch(err){
+    // produce useful debugging output in console and readable UI state
+    console.debug('checkConnection error', err);
+    const msg = (err && err.message) ? err.message : String(err);
+    if (/Too Many Requests/i.test(msg)){
+      const m = msg.match(/wait\s*(\d+)s/);
+      const secs = m ? m[1] : '';
+      connEl.textContent = secs ? `Status: Rate limited (${secs}s)` : 'Status: Rate limited';
+      setStatus(`Too many requests. ${secs?secs+'s':''}`, true);
+    } else {
+      connEl.textContent = "Status: Offline";
+      setStatus('Connection error: ' + msg, true);
+    }
+    connEl.classList.remove("ok"); connEl.classList.add("bad");
+    return false;
+  }
 }
 
 /* ===== Flatten server payload and rebuild threads ===== */
