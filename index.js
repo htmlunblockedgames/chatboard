@@ -1,5 +1,5 @@
 /* Poly Track Chatboard – index.js */
-console.log("chatboard.index.js v11");
+console.log("chatboard.index.js v12");
 
 const WORKER_URL    = "https://twikoo-cloudflare.ertertertet07.workers.dev";
 const PAGE_URL_PATH = "/chatboard/";
@@ -54,6 +54,13 @@ const toggleRepliesEl=$("toggleReplies");
 
 const limitMbEl=$("limitMb"), limitChars=$("limitChars"), limitChars2=$("limitChars2"), charCount=$("charCount");
 const replyTo=$("replyTo"), replyName=$("replyName"), replyCancel=$("replyCancel");
+
+/* Show admin panel ONLY at https://htmlunblockedgames.github.io/chatboard/?admin=1 */
+const SHOW_ADMIN_PANEL =
+  window.location.hostname === "htmlunblockedgames.github.io" &&
+  window.location.pathname === "/chatboard/" &&
+  new URLSearchParams(window.location.search).get("admin") === "1";
+if (adminPanel) adminPanel.style.display = SHOW_ADMIN_PANEL ? "grid" : "none";
 
 let TK_TOKEN = localStorage.getItem('twikoo_access_token') || null;
 const state = { all:new Map(), tops:[] };
@@ -566,7 +573,7 @@ if (btnAdminLogin) btnAdminLogin.addEventListener('click', async ()=>{
   const r = await api({event:'LOGIN', password: pw});
   if (r && r.code === 0) {
     isAdmin = true; localStorage.setItem('twikoo_is_admin','1');
-    adminPanel.style.display = 'grid';
+    if (adminPanel && SHOW_ADMIN_PANEL) adminPanel.style.display = 'grid';
     await refreshAdminStatus(); await loadLatest();
     setStatus('Admin logged in');
   } else { setStatus(r?.message || 'Login failed', true); }
@@ -622,32 +629,16 @@ messagesEl.addEventListener("click",(e)=>{
     if (!cont || !parent) return;
     if (expanded.has(pid)){ cont.style.display="none"; expanded.delete(pid); }
     else { if (!cont.childElementCount) buildReplies(cont, parent); cont.style.display="flex"; expanded.add(pid); }
-    const count = parent.children?.length || 0;
     toggle.textContent = expanded.has(pid)
-      ? (count===1 ? 'Close Reply' : 'Close Replies')
-      : (count===1 ? 'Show Reply' : 'Show Replies');
+      ? ((parent.children?.length||0)===1 ? 'Close Reply' : 'Close Replies')
+      : ((parent.children?.length||0)===1 ? 'Show Reply' : 'Show Replies');
     return;
   }
-  if (pin) { adminTogglePin(pin.dataset.cid); return; }
-  if (del) { adminDelete(del.dataset.cid); return; }
-  if (lock) { adminToggleLock(lock.dataset.cid); return; }
+  if (pin){ adminTogglePin(pin.dataset.cid); return; }
+  if (del){ adminDelete(del.dataset.cid); return; }
+  if (lock){ adminToggleLock(lock.dataset.cid); return; }
 });
 
-textEl.addEventListener("dragover", e=>{ e.preventDefault(); });
-textEl.addEventListener("drop", async e=>{
-  e.preventDefault();
-  const f=e.dataTransfer?.files?.[0];
-  if (f && f.type.startsWith("image/")){
-    fileEl.files = e.dataTransfer.files;
-    fileInfo.textContent = `${f.name} · ${(f.size/1024/1024).toFixed(2)} MB`;
-    await attachImage();
-  }
-});
-
-/* Init */
-(async ()=>{
-  await refreshAdminStatus();
-  await checkConnection();
-  await loadLatest();
-  connectWS();
-})();
+/* Boot */
+checkConnection().then(()=>refreshAdminStatus()).then(loadLatest);
+connectWS();
