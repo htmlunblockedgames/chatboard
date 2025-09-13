@@ -59,6 +59,55 @@ function parseRetryAfter(h){
   return Number.isNaN(d) ? 0 : d;
 }
 
+/* Minimal safe renderer: allows <img>, <a>, <br>; text for everything else */
+function renderSafeContent(input){
+  const text = String(input ?? "");
+  const tpl = document.createElement('template');
+  tpl.innerHTML = text.replace(/\n/g, '<br>');
+
+  const frag = document.createDocumentFragment();
+  const pushText = s => frag.appendChild(document.createTextNode(s || ''));
+
+  Array.from(tpl.content.childNodes).forEach(node => {
+    if (node.nodeType === Node.TEXT_NODE) return pushText(node.textContent);
+
+    if (node.nodeType === Node.ELEMENT_NODE) {
+      const tag = node.tagName.toLowerCase();
+
+      if (tag === 'br') return frag.appendChild(document.createElement('br'));
+
+      if (tag === 'img') {
+        const src = node.getAttribute('src') || '';
+        if (/^data:image\/|^https?:\/\//i.test(src)) {
+          const img = document.createElement('img');
+          img.src = src;
+          img.alt = node.getAttribute('alt') || '';
+          img.loading = 'lazy';
+          img.decoding = 'async';
+          return frag.appendChild(img);
+        }
+        return pushText('[blocked image]');
+      }
+
+      if (tag === 'a') {
+        const href = node.getAttribute('href') || '';
+        const a = document.createElement('a');
+        if (/^https?:\/\//i.test(href)) {
+          a.href = href; a.target = '_blank'; a.rel = 'noopener noreferrer nofollow';
+        }
+        a.textContent = node.textContent || href;
+        return frag.appendChild(a);
+      }
+
+      return pushText(node.textContent || '');
+    }
+  });
+
+  const wrap = document.createElement('div');
+  wrap.appendChild(frag);
+  return wrap;
+}
+
 /* Client-side nickname guard */
 function isForbiddenNick(nick){
   if (!nick) return false;
@@ -308,26 +357,6 @@ function renderAll(){
   for (const c of state.tops){
     const node = renderMsg(c);
 
-    // Admin controls for top-level
-    if (isAdmin && (c.rid || '') === '') {
-      const actions = node.querySelector('.actions');
-      if (actions) {
-        const pinBtn = document.createElement('span');
-        pinBtn.className = 'action';
-        pinBtn.dataset.action = 'adminPin';
-        pinBtn.dataset.cid = c._id;
-        pinBtn.textContent = Number(c.top) === 1 ? 'Unpin' : 'Pin';
-        actions.appendChild(pinBtn);
-
-        const delBtn = document.createElement('span');
-        delBtn.className = 'action';
-        delBtn.dataset.action = 'adminDel';
-        delBtn.dataset.cid = c._id;
-        delBtn.textContent = 'Delete';
-        actions.appendChild(delBtn);
-      }
-    }
-
     const count = c.children?.length || 0;
     if (count > 0) {
       const actions = node.querySelector('.actions');
@@ -390,13 +419,30 @@ function renderMsg(c){
     replyToSpan.textContent = `↪ Replying to ${c.parentNick}`;
     content.appendChild(replyToSpan);
   }
-  const contentBody = document.createElement('div');
-  contentBody.textContent = c.comment || "";
+  // Render message body (allow <img>, <a>, <br>)
+  const contentBody = renderSafeContent(c.comment || "");
   content.appendChild(contentBody);
 
   const actions=document.createElement("div"); actions.className="actions";
   const replyBtn=document.createElement("span"); replyBtn.className="action"; replyBtn.dataset.action="reply"; replyBtn.textContent="↩ Reply";
   actions.append(replyBtn);
+  if (isAdmin) {
+    const delBtn = document.createElement('span');
+    delBtn.className = 'action';
+    delBtn.dataset.action = 'adminDel';
+    delBtn.dataset.cid = cid;
+    delBtn.textContent = 'Delete';
+    actions.appendChild(delBtn);
+
+    if ((c.rid || '') === '') {
+      const pinBtn = document.createElement('span');
+      pinBtn.className = 'action';
+      pinBtn.dataset.action = 'adminPin';
+      pinBtn.dataset.cid = cid;
+      pinBtn.textContent = Number(c.top) === 1 ? 'Unpin' : 'Pin';
+      actions.appendChild(pinBtn);
+    }
+  }
 
   bubble.append(meta,content,actions);
   wrap.append(avatar,bubble);
@@ -657,7 +703,7 @@ messagesEl.addEventListener("click",(e)=>{
   }
 
   if (pin) { adminTogglePin(pin.dataset.cid); return; }
-  if (del) { if (confirm('Delete this comment?')) adminDelete(del.dataset.cid); return; }
+  if (del) { adminDelete(del.dataset.cid); return; }
 });
 
 /* Drag & drop image onto textarea */
