@@ -1,6 +1,6 @@
 /* Poly Track Chatboard – index.js */
 /* Works with the provided index.html structure and Twikoo Worker backend */
-console.log("chatboard.index.js v8");
+console.log("chatboard.index.js v9");
 
 /* ===== Configure if you move host/path ===== */
 const WORKER_URL    = "https://twikoo-cloudflare.ertertertet07.workers.dev";
@@ -58,6 +58,10 @@ function parseRetryAfter(h){
   if (!Number.isNaN(n)) return Date.now() + n*1000;
   const d = Date.parse(h);
   return Number.isNaN(d) ? 0 : d;
+}
+function currentNick(){
+  const n = (nickEl && nickEl.value ? nickEl.value.trim() : "") || "Anonymous";
+  return n;
 }
 
 /* Minimal safe renderer */
@@ -243,6 +247,8 @@ function updateAdminUI(){
     adminControls.style.display = 'none';
     adminNote.textContent = 'Login to manage comments';
   }
+
+  document.body.classList.toggle('is-admin', !!isAdmin);
 }
 async function refreshAdminStatus(){
   const r = await api({event:'GET_CONFIG'});
@@ -410,9 +416,18 @@ function renderMsg(c){
   const cid = c._id || c.id;
   const wrap=document.createElement("div"); wrap.className="msg"; wrap.dataset.cid=cid;
 
+  const selfAdmin = isAdmin && (((c.nick || "Anonymous") === currentNick()) || ((c.nick || "") === "Poly Track Administrator"));
+  if (selfAdmin) wrap.classList.add("by-admin");
+
   const avatar=document.createElement("div"); avatar.className="avatar";
-  if (c.avatar){ const img=new Image(); img.src=c.avatar; img.alt=c.nick||"avatar"; avatar.appendChild(img); }
-  else { avatar.textContent = initialOf(c.nick); }
+  if (selfAdmin){
+    avatar.classList.add("admin");
+    avatar.textContent = "</>";
+  } else if (c.avatar){
+    const img=new Image(); img.src=c.avatar; img.alt=c.nick||"avatar"; avatar.appendChild(img);
+  } else {
+    avatar.textContent = initialOf(c.nick);
+  }
 
   const bubble=document.createElement("div"); bubble.className="bubble";
   const depth = Number(c.depth || 0);
@@ -420,6 +435,7 @@ function renderMsg(c){
 
   const meta=document.createElement("div"); meta.className="meta";
   const nick=document.createElement("span"); nick.className="nick"; nick.textContent=c.nick||"Anonymous";
+  if (selfAdmin) nick.classList.add("admin-glow");
   const time=document.createElement("span"); time.textContent=new Date(c.created||Date.now()).toLocaleString();
   meta.append(nick,time);
 
@@ -594,12 +610,23 @@ async function sendMessage(){
       }
       textEl.value=""; charCount.textContent="0"; fileEl.value=""; fileInfo.textContent=""; clearReplyTarget();
       await loadLatest();
+      highlightMessage(newId);
       setStatus("");
     }else{
       throw new Error(prettifyError(r?.message || "Unknown error"));
     }
   }catch(e){ setStatus("Send failed: " + e.message, true); }
   finally{ btnSend.disabled=false; btnSend.textContent="Send"; }
+}
+
+function highlightMessage(id){
+  if (!id) return;
+  const card = document.querySelector(`.msg[data-cid="${id}"]`);
+  if (!card) return;
+  const content = card.querySelector('.content');
+  if (!content) return;
+  content.classList.add('flash');
+  setTimeout(()=>content.classList.remove('flash'), 1400);
 }
 
 async function attachImage(){
