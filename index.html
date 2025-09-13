@@ -30,7 +30,7 @@
     .panel{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow)}
 
     /* Admin panel */
-    #adminPanel{padding:18px;display:none;gap:10px}
+    #adminPanel{padding:18px;display:grid;gap:10px}
     #adminPanel .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
     #adminNote{font-size:12px;color:var(--muted)}
     .admin-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}
@@ -163,7 +163,7 @@
 </head>
 <body>
   <main class="container">
-    <!-- Admin Panel (hidden; open via #admin or ?admin=1) -->
+    <!-- Admin Panel (visible; open via #admin or ?admin=1) -->
     <section id="adminPanel" class="panel">
       <div class="row">
         <strong>Admin</strong>
