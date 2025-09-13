@@ -1,5 +1,6 @@
 /* Poly Track Chatboard – index.js */
 /* Works with the provided index.html structure and Twikoo Worker backend */
+console.log("chatboard.index.js v3");
 
 /* ===== Configure if you move host/path ===== */
 const WORKER_URL    = "https://twikoo-cloudflare.ertertertet07.workers.dev";
