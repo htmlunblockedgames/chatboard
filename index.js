@@ -1,6 +1,6 @@
 /* Poly Track Chatboard – index.js */
 /* Works with the provided index.html structure and Twikoo Worker backend */
-console.log("chatboard.index.js v4");
+console.log("chatboard.index.js v5");
 
 /* ===== Configure if you move host/path ===== */
 const WORKER_URL    = "https://twikoo-cloudflare.ertertertet07.workers.dev";
@@ -32,6 +32,7 @@ let earliestMainCreated=null; // smallest created among current top-levels
 let replyTarget=null; // {_id, rid, nick}
 const expanded = new Set(); // top-level ids with visible replies
 let isAdmin = false;
+let rateBlockedUntil = 0;   // until timestamp if 429 hit
 
 /* Limits text */
 limitMbEl.textContent=MAX_FILE_MB;
@@ -48,6 +49,14 @@ const setStatus=(t,isError=false)=>{
 function fileToDataURL(file){ return new Promise((res,rej)=>{ const fr=new FileReader(); fr.onerror=()=>rej(fr.error||new Error("FileReader error")); fr.onload=()=>res(fr.result); fr.readAsDataURL(file); }); }
 function insertAtCursor(el,text){ const s=el.selectionStart??el.value.length, e=el.selectionEnd??el.value.length; el.value=el.value.slice(0,s)+text+el.value.slice(e); const pos=s+text.length; el.setSelectionRange(pos,pos); el.focus(); }
 function truthy(v){ return v === true || v === 1 || v === '1' || v === 'true'; }
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+function parseRetryAfter(h){
+  if (!h) return 0;
+  const n = Number(h);
+  if (!Number.isNaN(n)) return Date.now() + n*1000;
+  const d = Date.parse(h);
+  return Number.isNaN(d) ? 0 : d;
+}
 
 /* Client-side nickname guard */
 function isForbiddenNick(nick){
@@ -58,25 +67,59 @@ function isForbiddenNick(nick){
   return s.includes('admin') || s.includes('administrator');
 }
 
-/* API with token persistence and compatibility headers */
+/* API with token persistence, idempotent retries, and 429 handling */
 async function api(eventObj){
   const body = { ...eventObj };
-  // Twikoo admin ops expect URL; safe to send always
-  if (body.url == null) body.url = PAGE_URL_PATH;
-  // attach token in multiple ways for compatibility
+  if (body.url == null) body.url = PAGE_URL_PATH; // Twikoo admin ops require url
   if (TK_TOKEN) { body.accessToken = TK_TOKEN; body.token = TK_TOKEN; }
   const headers = { "content-type": "application/json" };
   if (TK_TOKEN) headers["x-access-token"] = TK_TOKEN;
 
-  const res = await fetch(WORKER_URL, { method: "POST", headers, body: JSON.stringify(body) });
-  const json = await res.json().catch(() => ({}));
-
-  // persist token only when server returns one from LOGIN
-  if (body.event === 'LOGIN' && json && json.accessToken) {
-    TK_TOKEN = json.accessToken;
-    localStorage.setItem('twikoo_access_token', TK_TOKEN);
+  // if currently blocked, fail fast so UI can message clearly
+  const now = Date.now();
+  if (now < rateBlockedUntil) {
+    const secs = Math.ceil((rateBlockedUntil - now)/1000);
+    throw new Error(`Too Many Requests: wait ${secs}s`);
   }
-  return json;
+
+  const idempotent = body.event === 'COMMENT_GET' || body.event === 'GET_CONFIG' || body.event === 'GET_FUNC_VERSION';
+  const maxAttempts = idempotent ? 3 : 1;
+
+  let attempt = 0, lastErr;
+  while (attempt < maxAttempts) {
+    attempt++;
+    try {
+      const res = await fetch(WORKER_URL, { method: "POST", headers, body: JSON.stringify(body) });
+
+      if (res.status === 429) {
+        const ra = res.headers.get('retry-after');
+        const until = parseRetryAfter(ra) || (Date.now() + 20000);
+        rateBlockedUntil = Math.max(rateBlockedUntil, until);
+        if (attempt < maxAttempts) {
+          const backoff = Math.min(8000, 500 * Math.pow(2, attempt-1)) + Math.random()*200;
+          await sleep(backoff);
+          continue;
+        }
+        throw new Error('Too Many Requests');
+      }
+
+      const json = await res.json().catch(() => ({}));
+      if (body.event === 'LOGIN' && json && json.accessToken) {
+        TK_TOKEN = json.accessToken;
+        localStorage.setItem('twikoo_access_token', TK_TOKEN);
+      }
+      return json;
+    } catch (e) {
+      lastErr = e;
+      if (attempt < maxAttempts) {
+        const backoff = Math.min(8000, 500 * Math.pow(2, attempt-1)) + Math.random()*200;
+        await sleep(backoff);
+        continue;
+      }
+      throw e;
+    }
+  }
+  throw lastErr || new Error("Request failed");
 }
 
 /* Admin helpers */
@@ -324,8 +367,9 @@ async function loadLatest(){
     mergeList(list);
     renderAll();
     if (r && r.more === false) { loadMoreBtn.style.display="none"; }
-  }catch{ setStatus("Failed to load messages.", true); }
-  finally{ loading=false; }
+  }catch(e){
+    setStatus(prettifyError(e?.message) || "Failed to load messages.", true);
+  }finally{ loading=false; }
 }
 
 async function loadOlder(){
@@ -343,8 +387,8 @@ async function loadOlder(){
     }else{
       loadMoreBtn.textContent="No more"; loadMoreBtn.disabled=true;
     }
-  }catch{
-    setStatus("Failed loading older.", true);
+  }catch(e){
+    setStatus(prettifyError(e?.message) || "Failed loading older.", true);
     loadMoreBtn.disabled=false; loadMoreBtn.textContent="Load older";
   }finally{ loading=false; }
 }
@@ -353,6 +397,7 @@ async function loadOlder(){
 function prettifyError(msg){
   if (!msg) return "Unexpected error";
   const m=String(msg);
+  if (m.startsWith("Too Many Requests: wait")) return m;
   if (m.includes("发言频率过高")) return "You're sending too fast. Please wait a little and try again.";
   if (m.includes("评论太火爆")) return "Chat is busy right now — please try again in a moment.";
   if (m.includes("验证码")) return "Captcha check failed.";
@@ -439,19 +484,23 @@ function clearReplyTarget(){ replyTarget=null; replyName.textContent=""; replyTo
 
 /* Admin actions */
 async function adminTogglePin(id){
-  const item = state.all.get(id);
-  if (!item) return;
-  const currentPinned = state.tops.filter(x => Number(x.top) === 1).length;
-  const wantTop = Number(item.top) === 1 ? 0 : 1;
-  if (wantTop === 1 && currentPinned >= 3) { setStatus("Pin limit reached (3). Unpin something first.", true); return; }
-  const r = await api({event:'COMMENT_SET_FOR_ADMIN', url: PAGE_URL_PATH, id, set:{ top: wantTop }});
-  if (r && r.code === 0) await loadLatest();
-  else setStatus(r?.message || 'Pin failed', true);
+  try{
+    const item = state.all.get(id);
+    if (!item) return;
+    const currentPinned = state.tops.filter(x => Number(x.top) === 1).length;
+    const wantTop = Number(item.top) === 1 ? 0 : 1;
+    if (wantTop === 1 && currentPinned >= 3) { setStatus("Pin limit reached (3). Unpin something first.", true); return; }
+    const r = await api({event:'COMMENT_SET_FOR_ADMIN', url: PAGE_URL_PATH, id, set:{ top: wantTop }});
+    if (r && r.code === 0) await loadLatest();
+    else setStatus(r?.message || 'Pin failed', true);
+  }catch(e){ setStatus(prettifyError(e?.message) || 'Pin failed', true); }
 }
 async function adminDelete(id){
-  const r = await api({event:'COMMENT_DELETE_FOR_ADMIN', url: PAGE_URL_PATH, id});
-  if (r && r.code === 0) await loadLatest();
-  else setStatus(r?.message || 'Delete failed', true);
+  try{
+    const r = await api({event:'COMMENT_DELETE_FOR_ADMIN', url: PAGE_URL_PATH, id});
+    if (r && r.code === 0) await loadLatest();
+    else setStatus(r?.message || 'Delete failed', true);
+  }catch(e){ setStatus(prettifyError(e?.message) || 'Delete failed', true); }
 }
 
 /* Events */
