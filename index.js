@@ -6,7 +6,7 @@ console.log("chatboard.index.js v8");
 const WORKER_URL    = "https://twikoo-cloudflare.ertertertet07.workers.dev";
 const PAGE_URL_PATH = "/chatboard/";
 const PAGE_HREF     = "https://htmlunblockedgames.github.io/chatboard/";
-const MAX_FILE_MB   = 5;
+const MAX_FILE_MB   = 7; // must be ≤ server LIMIT_MB
 const MAX_CHARS     = 2000;
 
 /* DOM */
