@@ -73,7 +73,13 @@ async function api(eventObj){
   if (body.url == null) body.url = PAGE_URL_PATH; // Twikoo admin ops require url
   if (TK_TOKEN) { body.accessToken = TK_TOKEN; body.token = TK_TOKEN; }
   const headers = { "content-type": "application/json" };
-  if (TK_TOKEN) headers["x-access-token"] = TK_TOKEN;
+  if (TK_TOKEN) {
+    // send token under multiple header names to maximize compatibility with different worker implementations
+    headers["x-access-token"] = TK_TOKEN;
+    headers["authorization"] = "Bearer " + TK_TOKEN;
+    headers["Authorization"] = "Bearer " + TK_TOKEN;
+    headers["access-token"] = TK_TOKEN;
+  }
 
   // if currently blocked, fail fast so UI can message clearly
   const now = Date.now();
