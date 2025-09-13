@@ -1,6 +1,6 @@
 /* Poly Track Chatboard – index.js */
 /* Works with the provided index.html structure and Twikoo Worker backend */
-console.log("chatboard.index.js v5");
+console.log("chatboard.index.js v7");
 
 /* ===== Configure if you move host/path ===== */
 const WORKER_URL    = "https://twikoo-cloudflare.ertertertet07.workers.dev";
@@ -70,25 +70,23 @@ function isForbiddenNick(nick){
 /* API with token persistence, idempotent retries, and 429 handling */
 async function api(eventObj){
   const body = { ...eventObj };
-  if (body.url == null) body.url = PAGE_URL_PATH; // Twikoo admin ops require url
+  if (body.url == null) body.url = PAGE_URL_PATH;
   if (TK_TOKEN) { body.accessToken = TK_TOKEN; body.token = TK_TOKEN; }
   const headers = { "content-type": "application/json" };
   if (TK_TOKEN) {
-    // send token under multiple header names to maximize compatibility with different worker implementations
     headers["x-access-token"] = TK_TOKEN;
     headers["authorization"] = "Bearer " + TK_TOKEN;
     headers["Authorization"] = "Bearer " + TK_TOKEN;
     headers["access-token"] = TK_TOKEN;
   }
 
-  // if currently blocked, fail fast so UI can message clearly
   const now = Date.now();
   if (now < rateBlockedUntil) {
     const secs = Math.ceil((rateBlockedUntil - now)/1000);
     throw new Error(`Too Many Requests: wait ${secs}s`);
   }
 
-  const idempotent = body.event === 'COMMENT_GET' || body.event === 'GET_CONFIG' || body.event === 'GET_FUNC_VERSION';
+  const idempotent = body.event === 'COMMENT_GET' || body.event === 'GET_CONFIG' || body.event === 'GET_FUNC_VERSION' || body.event === 'GET';
   const maxAttempts = idempotent ? 3 : 1;
 
   let attempt = 0, lastErr;
@@ -97,7 +95,6 @@ async function api(eventObj){
     try {
       const res = await fetch(WORKER_URL, { method: "POST", headers, body: JSON.stringify(body) });
 
-      // HTTP 429 handling
       if (res.status === 429) {
         const ra = res.headers.get('retry-after');
         const until = parseRetryAfter(ra) || (Date.now() + 20000);
@@ -110,12 +107,9 @@ async function api(eventObj){
         throw new Error('Too Many Requests');
       }
 
-      // Parse JSON (may be Twikoo style)
       const json = await res.json().catch(() => ({}));
 
-      // Twikoo sometimes returns HTTP 200 with a JSON payload indicating rate-limit.
       if (json && (json.code === 1000 || (json.message && /too many requests/i.test(String(json.message))))) {
-        // try to derive retry interval from header or JSON fields
         const ra = res.headers.get('retry-after');
         let until = parseRetryAfter(ra) || 0;
         if (!until && json.retryAfterSeconds) until = Date.now() + Number(json.retryAfterSeconds) * 1000;
@@ -130,7 +124,6 @@ async function api(eventObj){
         throw new Error('Too Many Requests');
       }
 
-      // Persist token on LOGIN and also persist token if returned by GET_CONFIG
       if (body.event === 'LOGIN' && json && json.accessToken) {
         TK_TOKEN = json.accessToken;
         localStorage.setItem('twikoo_access_token', TK_TOKEN);
@@ -175,11 +168,9 @@ function updateAdminUI(){
   }
 }
 async function refreshAdminStatus(){
-  // fetch server config and log for debugging
   const r = await api({event:'GET_CONFIG'});
   console.debug('GET_CONFIG response', r);
 
-  // if server returned an accessToken persist it
   if (r && r.accessToken) {
     TK_TOKEN = r.accessToken;
     localStorage.setItem('twikoo_access_token', TK_TOKEN);
@@ -188,8 +179,6 @@ async function refreshAdminStatus(){
   const adminFlag = r && (truthy(r.isAdmin) || truthy(r.admin) ||
                           (r.data && (truthy(r.data.isAdmin) || truthy(r.data.admin))) ||
                           (r.config && (truthy(r.config.IS_ADMIN) || truthy(r.config.is_admin))));
-
-  // persist admin hint locally when server says so
   if (adminFlag) localStorage.setItem('twikoo_is_admin','1'); else localStorage.removeItem('twikoo_is_admin');
 
   const cached = (localStorage.getItem('twikoo_is_admin') === '1') && !!TK_TOKEN;
@@ -199,54 +188,24 @@ async function refreshAdminStatus(){
   adminPanel.style.display = (isAdmin || requested) ? 'grid' : 'none';
   updateAdminUI();
 }
-async function adminLogin(){
-  const pw = adminPass.value.trim();
-  if (!pw) { setStatus('Enter password', true); return; }
-  const r = await api({event:'LOGIN', password: pw});
-  if (r && r.code === 0) {
-    isAdmin = true;
-    localStorage.setItem('twikoo_is_admin','1');
-    adminPanel.style.display = 'grid';
-    await refreshAdminStatus();
-    await loadLatest();
-    setStatus('Admin logged in');
-  } else {
-    setStatus(r?.message || 'Login failed', true);
-  }
-}
-async function adminLogout(){
-  isAdmin = false;
-  localStorage.removeItem('twikoo_is_admin');
-  TK_TOKEN = null;
-  localStorage.removeItem('twikoo_access_token');
-  await refreshAdminStatus();
-  setStatus('Logged out');
-}
 
 /* Connection indicator */
 async function checkConnection(){
   try{
-    // if we are currently rate-limited, show remaining wait time immediately
     if (Date.now() < rateBlockedUntil){
       const secs = Math.ceil((rateBlockedUntil - Date.now())/1000);
       connEl.textContent = `Status: Rate limited (${secs}s)`;
       connEl.classList.remove("ok"); connEl.classList.add("bad");
       setStatus(`API rate limit. Wait ${secs}s`, true);
-      console.debug('checkConnection: suppressed due to client-side rateBlockedUntil', {rateBlockedUntil, secs});
       return false;
     }
-
-    // make the GET_FUNC_VERSION call and surface the response for debugging
     const res = await api({event:"GET_FUNC_VERSION"});
     console.debug('checkConnection GET_FUNC_VERSION response', res);
-
     connEl.textContent = "Status: Online";
     connEl.classList.remove("bad"); connEl.classList.add("ok");
     setStatus('');
     return true;
   }catch(err){
-    // produce useful debugging output in console and readable UI state
-    console.debug('checkConnection error', err);
     const msg = (err && err.message) ? err.message : String(err);
     if (/Too Many Requests/i.test(msg)){
       const m = msg.match(/wait\s*(\d+)s/);
@@ -276,15 +235,17 @@ function mergeList(list){
       created: src.created || Date.now(),
       nick: src.nick || "Anonymous",
       avatar: src.avatar || "",
-      comment: src.comment || "",
+      comment: src.comment || src.content || "",
       depth: 0,
       parentNick: null,
-      children: []
+      children: [],
+      top: Number(src.top ? 1 : 0)
     });
   };
 
   (Array.isArray(list) ? list : []).forEach(top => {
-    pushItem({ ...top, rid: "" });
+    // keep existing rid/pid if provided (don’t force top-level)
+    pushItem(top);
     if (Array.isArray(top.replies)) top.replies.forEach(r => pushItem(r));
   });
 
@@ -352,7 +313,6 @@ function renderAll(){
       }
     }
 
-    // Toggle replies button if children exist
     const count = c.children?.length || 0;
     if (count > 0) {
       const actions = node.querySelector('.actions');
@@ -368,7 +328,6 @@ function renderAll(){
       }
     }
 
-    // Replies container
     const cont = document.createElement("div");
     cont.className="replies";
     cont.id = "replies-"+c._id;
@@ -385,7 +344,6 @@ function renderAll(){
   }
   messagesEl.appendChild(frag);
 
-  // Show or hide "Load older"
   if (state.tops.length) { loadMoreBtn.style.display="inline-flex"; loadMoreBtn.disabled=false; loadMoreBtn.textContent="Load older"; }
   else { loadMoreBtn.style.display="none"; }
 
@@ -418,7 +376,7 @@ function renderMsg(c){
     content.appendChild(replyToSpan);
   }
   const contentBody = document.createElement('div');
-  contentBody.innerHTML=c.comment||"";
+  contentBody.textContent = c.comment || "";
   content.appendChild(contentBody);
 
   const actions=document.createElement("div"); actions.className="actions";
@@ -440,8 +398,23 @@ function buildReplies(container, parent){
 async function loadLatest(){
   if (loading) return; loading=true;
   try{
-    const r = await api({event:"COMMENT_GET", url: PAGE_URL_PATH});
-    const list = Array.isArray(r?.data) ? r.data : [];
+    const r = await api({event:"COMMENT_GET", url: PAGE_URL_PATH, page:1, pageSize:20});
+    const raw = Array.isArray(r?.data) ? r.data
+               : Array.isArray(r?.data?.comments) ? r.data.comments
+               : [];
+    const list = raw.map(row => ({
+      _id: row._id || row.id,
+      id: row.id || row._id,
+      url: row.url,
+      nick: row.nick || 'Anonymous',
+      mail: row.mail || '',
+      link: row.link || '',
+      comment: row.comment ?? row.content ?? '',
+      created: Number(row.created ?? row.created_at ?? Date.now()),
+      top: Number(row.top ? 1 : 0),
+      pid: row.pid || '',
+      rid: row.rid || ''
+    }));
     mergeList(list);
     renderAll();
     if (r && r.more === false) { loadMoreBtn.style.display="none"; }
@@ -454,8 +427,23 @@ async function loadOlder(){
   if (loading || !earliestMainCreated) return;
   loading=true; loadMoreBtn.disabled=true; loadMoreBtn.textContent="Loading…";
   try{
-    const r = await api({event:"COMMENT_GET", url: PAGE_URL_PATH, before: earliestMainCreated});
-    const data = Array.isArray(r?.data) ? r.data : [];
+    const r = await api({event:"COMMENT_GET", url: PAGE_URL_PATH, page:1, pageSize:20, before: earliestMainCreated});
+    const raw = Array.isArray(r?.data) ? r.data
+               : Array.isArray(r?.data?.comments) ? r.data.comments
+               : [];
+    const data = raw.map(row => ({
+      _id: row._id || row.id,
+      id: row.id || row._id,
+      url: row.url,
+      nick: row.nick || 'Anonymous',
+      mail: row.mail || '',
+      link: row.link || '',
+      comment: row.comment ?? row.content ?? '',
+      created: Number(row.created ?? row.created_at ?? Date.now()),
+      top: Number(row.top ? 1 : 0),
+      pid: row.pid || '',
+      rid: row.rid || ''
+    }));
     if (data.length){
       const combined = [...Array.from(state.all.values()), ...data];
       mergeList(combined);
@@ -511,7 +499,8 @@ async function sendMessage(){
     if (rid) payload.rid = rid;
 
     const r = await api(payload);
-    if (r && r.id){
+    const newId = (r && (r.id || (r.data && r.data.id))) || null;
+    if (newId){
       if (pid){
         const rootToExpand = (rid && rid !== "") ? rid : pid;
         expanded.add(rootToExpand);
@@ -587,8 +576,28 @@ btnAttach.addEventListener("click", attachImage);
 loadMoreBtn.addEventListener("click", loadOlder);
 replyCancel.addEventListener("click", clearReplyTarget);
 
-if (btnAdminLogin) btnAdminLogin.addEventListener('click', adminLogin);
-if (btnAdminLogout) btnAdminLogout.addEventListener('click', adminLogout);
+if (btnAdminLogin) btnAdminLogin.addEventListener('click', async ()=>{
+  const pw = adminPass.value.trim(); if (!pw) { setStatus('Enter password', true); return; }
+  const r = await api({event:'LOGIN', password: pw});
+  if (r && r.code === 0) {
+    isAdmin = true;
+    localStorage.setItem('twikoo_is_admin','1');
+    adminPanel.style.display = 'grid';
+    await refreshAdminStatus();
+    await loadLatest();
+    setStatus('Admin logged in');
+  } else {
+    setStatus(r?.message || 'Login failed', true);
+  }
+});
+if (btnAdminLogout) btnAdminLogout.addEventListener('click', async ()=>{
+  isAdmin = false;
+  localStorage.removeItem('twikoo_is_admin');
+  TK_TOKEN = null;
+  localStorage.removeItem('twikoo_access_token');
+  await refreshAdminStatus();
+  setStatus('Logged out');
+});
 
 textEl.addEventListener("input", ()=>{
   const n=textEl.value.length; charCount.textContent=String(n);
