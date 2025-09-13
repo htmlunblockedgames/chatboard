@@ -1,5 +1,5 @@
 /* Poly Track Chatboard – index.js */
-console.log("chatboard.index.js v16");
+console.log("chatboard.index.js v17");
 
 const WORKER_URL    = "https://twikoo-cloudflare.ertertertet07.workers.dev";
 const PAGE_URL_PATH = "/chatboard/";
@@ -70,6 +70,7 @@ const expanded = new Set();
 let isAdmin = false;
 let rateBlockedUntil = 0;
 const flashedOnce = new Set();
+const pinAnimPlayed = new Set();
 let allowReplies = true; // global toggle
 let allowPosts = true;   // when false, only admin may post
 const devAnimStartAt = new Map(); // per-session start times for unpinned admin glow
@@ -274,14 +275,24 @@ function bindAdminTogglesOnce(){
     toggleRepliesEl.addEventListener('change', async (e) => {
       if (!isAdmin) { e.preventDefault(); updateAdminUI(); return; }
       const want = !!e.target.checked;
+      // Optimistic update for instant button hide/show
+      allowReplies = want;
+      updateAdminUI();
+      renderAll();
+      e.target.disabled = true;
       try{
         const r = await api({ event: 'SET_CONFIG_FOR_ADMIN', set: { allowReplies: want } });
+        // Trust server state but keep UI in sync
         allowReplies = String(r?.config?.ALLOW_REPLIES ?? 'true').toLowerCase() !== 'false';
-        updateAdminUI();
-        renderAll(); // reply buttons appear/disappear immediately
       }catch(err){
         setStatus(err?.message || 'Failed to update replies setting', true);
+        // Revert checkbox if server rejected
+        allowReplies = !want;
         e.target.checked = !!allowReplies;
+      }finally{
+        e.target.disabled = false;
+        updateAdminUI();
+        renderAll();
       }
     });
   }
@@ -289,15 +300,24 @@ function bindAdminTogglesOnce(){
     togglePostsEl.dataset.bound = '1';
     togglePostsEl.addEventListener('change', async (e) => {
       if (!isAdmin) { e.preventDefault(); updateAdminUI(); return; }
-      const onlyAdmin = !!e.target.checked; // checkbox means "Only admin can post"
+      const onlyAdmin = !!e.target.checked; // checked = only admin can post
+      // Optimistic update
+      allowPosts = !onlyAdmin;
+      updateAdminUI();
+      renderAll();
+      e.target.disabled = true;
       try{
         const r = await api({ event: 'SET_CONFIG_FOR_ADMIN', set: { allowPosts: !onlyAdmin } });
         allowPosts = String(r?.config?.ALLOW_POSTS ?? 'true').toLowerCase() !== 'false';
-        updateAdminUI();
-        renderAll();
       }catch(err){
         setStatus(err?.message || 'Failed to update posting setting', true);
+        // Revert on failure
+        allowPosts = !allowPosts;
         e.target.checked = !allowPosts;
+      }finally{
+        e.target.disabled = false;
+        updateAdminUI();
+        renderAll();
       }
     });
   }
@@ -539,10 +559,10 @@ function renderMsg(c){
   if (adminAuthor) {
     const isPinnedRoot = Number(c.top) === 1 && ((c.rid || "") === "");
     if (isPinnedRoot) {
-      const key = "pinAnim:" + cid;
-      if (!sessionStorage.getItem(key)) {
+      const key = cid;
+      if (!pinAnimPlayed.has(key)) {
         applyTextGlowOnce(body);
-        try { sessionStorage.setItem(key, "1"); } catch {}
+        pinAnimPlayed.add(key);
       }
     } else {
       const now = Date.now();
