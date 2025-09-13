@@ -1,5 +1,5 @@
 /* Poly Track Chatboard – index.js */
-console.log("chatboard.index.js v15");
+console.log("chatboard.index.js v16");
 
 const WORKER_URL    = "https://twikoo-cloudflare.ertertertet07.workers.dev";
 const PAGE_URL_PATH = "/chatboard/";
@@ -228,6 +228,12 @@ function updateAdminUI(){
     btnSend.disabled = false;
     btnSend.title = "";
   }
+
+  // If replies globally disabled, ensure any reply pill is hidden
+  if (!allowReplies) {
+    replyTarget = null;
+    replyTo.style.display = 'none';
+  }
 }
 
 async function refreshAdminStatus(){
@@ -245,6 +251,7 @@ async function refreshAdminStatus(){
   allowReplies = !!(r && r.config && String(r.config.ALLOW_REPLIES).toLowerCase() !== 'false');
   allowPosts   = !!(r && r.config && String(r.config.ALLOW_POSTS).toLowerCase() !== 'false');
   updateAdminUI();
+  bindAdminTogglesOnce();
 }
 
 async function checkConnection(){
@@ -257,6 +264,42 @@ async function checkConnection(){
     if (connEl) { connEl.textContent = "Status: Offline"; connEl.classList.remove("ok"); connEl.classList.add("bad"); }
     setStatus('Connection error', true);
     return false;
+  }
+}
+
+/* One-time binder for admin toggles */
+function bindAdminTogglesOnce(){
+  if (toggleRepliesEl && !toggleRepliesEl.dataset.bound) {
+    toggleRepliesEl.dataset.bound = '1';
+    toggleRepliesEl.addEventListener('change', async (e) => {
+      if (!isAdmin) { e.preventDefault(); updateAdminUI(); return; }
+      const want = !!e.target.checked;
+      try{
+        const r = await api({ event: 'SET_CONFIG_FOR_ADMIN', set: { allowReplies: want } });
+        allowReplies = String(r?.config?.ALLOW_REPLIES ?? 'true').toLowerCase() !== 'false';
+        updateAdminUI();
+        renderAll(); // reply buttons appear/disappear immediately
+      }catch(err){
+        setStatus(err?.message || 'Failed to update replies setting', true);
+        e.target.checked = !!allowReplies;
+      }
+    });
+  }
+  if (togglePostsEl && !togglePostsEl.dataset.bound) {
+    togglePostsEl.dataset.bound = '1';
+    togglePostsEl.addEventListener('change', async (e) => {
+      if (!isAdmin) { e.preventDefault(); updateAdminUI(); return; }
+      const onlyAdmin = !!e.target.checked; // checkbox means "Only admin can post"
+      try{
+        const r = await api({ event: 'SET_CONFIG_FOR_ADMIN', set: { allowPosts: !onlyAdmin } });
+        allowPosts = String(r?.config?.ALLOW_POSTS ?? 'true').toLowerCase() !== 'false';
+        updateAdminUI();
+        renderAll();
+      }catch(err){
+        setStatus(err?.message || 'Failed to update posting setting', true);
+        e.target.checked = !allowPosts;
+      }
+    });
   }
 }
 
@@ -356,20 +399,20 @@ function renderAll(){
 
 function applyTextGlowOnce(el){
   if (!el) return;
-  // Measure width to compute duration: min 2s for short, linear speed otherwise
   const w = el.scrollWidth || el.getBoundingClientRect().width || 0;
   const pxPerSec = 250; // constant speed for long messages
   const durSec = Math.max(2, w / pxPerSec);
   el.classList.add('glow-text');
   el.style.setProperty('--glow-dur', durSec + 's');
   const done = () => {
-    // transition to readable black text smoothly
-    el.classList.remove('glow-text');
+    // Avoid white flash: apply fade first, then remove glow-text on the next frame
+    el.removeEventListener('animationend', done);
     el.classList.add('glow-fade');
     el.style.removeProperty('--glow-dur');
-    el.removeEventListener('animationend', done);
-    // remove the fade helper class after it completes
-    setTimeout(() => { try { el.classList.remove('glow-fade'); } catch {} }, 400);
+    requestAnimationFrame(() => {
+      try { el.classList.remove('glow-text'); } catch {}
+      setTimeout(() => { try { el.classList.remove('glow-fade'); } catch {} }, 400);
+    });
   };
   el.addEventListener('animationend', done);
 }
@@ -386,20 +429,20 @@ function applyTextGlowRemainder(el, c){
   el.classList.add('glow-text');
   el.style.setProperty('--glow-dur', remain + 's');
   const done = () => {
-    el.classList.remove('glow-text');
+    el.removeEventListener('animationend', done);
     el.classList.add('glow-fade');
     el.style.removeProperty('--glow-dur');
-    el.removeEventListener('animationend', done);
-    setTimeout(() => { try { el.classList.remove('glow-fade'); } catch {} }, 400);
+    requestAnimationFrame(() => {
+      try { el.classList.remove('glow-text'); } catch {}
+      setTimeout(() => { try { el.classList.remove('glow-fade'); } catch {} }, 400);
+    });
   };
   el.addEventListener('animationend', done);
 }
 
-function shouldGlow(c){
-  // Deprecated: we now glow only for admin messages via render-time logic.
-  return false;
+function shouldGlow(_c){
+  return false; // non-admin messages no longer glow
 }
-
 
 function renderMsg(c){
   const cid = c._id || c.id;
@@ -438,9 +481,7 @@ function renderMsg(c){
   body.classList.add('glow-target');
   content.appendChild(body);
 
-  // Admin-only glow rules:
-  // - Pinned root (admin): animate once per session (sessionStorage).
-  // - Unpinned admin: animate once; if re-rendered, continue only the remaining portion.
+  // Admin-only glow rules
   if (adminAuthor) {
     const isPinnedRoot = Number(c.top) === 1 && ((c.rid || "") === "");
     if (isPinnedRoot) {
@@ -457,7 +498,6 @@ function renderMsg(c){
         applyTextGlowRemainder(body, c);
         devAnimStartAt.set(cid, now);
       } else {
-        // if animation started recently, only try to continue the remainder
         applyTextGlowRemainder(body, c);
       }
     }
@@ -564,252 +604,271 @@ async function loadOlder(){
       locked: !!row.locked
     }));
     if (r?.data?.counts) serverCounts = r.data.counts; else if (typeof r?.data?.count === 'number') serverCounts = { total: Number(r.data.count) };
-    if (data.length){
-      const combined = [...Array.from(state.all.values()), ...data];
-      mergeList(combined); renderAll();
-      if (r && r.more === false){ loadMoreBtn.textContent="No more"; loadMoreBtn.disabled=true; }
-      else { loadMoreBtn.disabled=false; loadMoreBtn.textContent="Load older"; }
-    }else{
-      loadMoreBtn.textContent="No more"; loadMoreBtn.disabled=true;
-    }
+
+    // Combine with existing comments and re-merge to preserve relationships
+    const existing = Array.from(state.all.values()).map(v => ({
+      _id: v._id, id: v._id, url: PAGE_URL_PATH,
+      nick: v.nick || 'Anonymous', mail: '', link: '',
+      comment: v.comment || '', created: Number(v.created || Date.now()),
+      top: Number(v.top ? 1 : 0), pid: v.pid || '', rid: v.rid || '',
+      locked: !!v.locked
+    }));
+    mergeList([...existing, ...data]);
+    renderAll();
+    loadMoreBtn.disabled=false; loadMoreBtn.textContent="Load older";
+    if (!data.length) loadMoreBtn.style.display="none";
   }catch(e){
-    setStatus((e?.message)||"Failed loading older.", true);
+    setStatus((e?.message)||"Failed to load older messages.", true);
     loadMoreBtn.disabled=false; loadMoreBtn.textContent="Load older";
   }finally{ loading=false; }
 }
 
-/* Errors prettifier */
-function prettifyError(m){ if(!m) return "Unexpected error"; const s=String(m);
-  if (s.includes("未配置图片上传服务")) return "Image upload service is not configured.";
-  if (s.includes("请先登录")) return "Please sign in first.";
-  if (s.includes("Too Many Requests")) return "Too many requests. Please slow down.";
-  return s;
-}
-
 /* Actions */
-async function sendMessage(){
-  const nickRaw = nickEl.value.trim();
-  const nick = isAdmin ? "Poly Track Administrator" : (nickRaw || "Anonymous");
-  if (!isAdmin && !allowPosts) { setStatus("Only admin can post right now.", true); return; }
-  const htmlRaw = textEl.value.trim();
-  if (!htmlRaw){ setStatus("Type a message first.", true); return; }
-  const html = sanitizeOutgoing(htmlRaw);
-  if (html.length > MAX_CHARS){ setStatus(`Message too long. Max ${MAX_CHARS} characters.`, true); return; }
+async function doSend(){
+  let nick = (nickEl.value||"").trim();
+  if (!nick) nick = "Anonymous";
 
-  let pid, rid;
-  if (allowReplies && replyTarget){
-    const cid = replyTarget._id || replyTarget.id;
-    pid = cid;
-    rid = replyTarget.rid && replyTarget.rid !== "" ? replyTarget.rid : cid;
-  }
+  let content = (textEl.value||"").trim();
+  content = sanitizeOutgoing(content);
+  if (!content) { setStatus("Nothing to send.", true); return; }
+  if (content.length > MAX_CHARS) content = content.slice(0, MAX_CHARS);
 
-  btnSend.disabled=true; btnSend.textContent="Sending…"; setStatus("Sending…");
-  try{
-    const payload = {event:"COMMENT_SUBMIT", nick, comment: html, url: PAGE_URL_PATH, href: PAGE_HREF, ua: navigator.userAgent};
-    if (allowReplies && pid) payload.pid = pid;
-    if (allowReplies && rid) payload.rid = rid;
-
-    const r = await api(payload);
-    const newId = (r && (r.id || (r.data && r.data.id))) || null;
-    if (newId){
-      textEl.value=""; charCount.textContent="0"; fileEl.value=""; fileInfo.textContent=""; clearReplyTarget();
-      await loadLatest();
-      setStatus("");
-    }else{
-      throw new Error(prettifyError(r?.message || "Unknown error"));
-    }
-  }catch(e){ setStatus("Send failed: " + e.message, true); }
-  finally{ btnSend.disabled=false; btnSend.textContent="Send"; }
-}
-
-async function attachImage(){
-  const f = fileEl.files && fileEl.files[0];
-  if (!f){ setStatus("Choose an image file first.", true); return; }
-  if (!/^image\//.test(f.type)){ setStatus("Only image files are allowed.", true); return; }
-  const maxBytes = MAX_FILE_MB * 1024 * 1024;
-  if (f.size > maxBytes){ setStatus(`Image too large (>${MAX_FILE_MB} MB).`, true); return; }
-
-  btnAttach.disabled=true; btnAttach.textContent="Uploading…"; setStatus("Uploading image…");
-  try{
-    const dataURL = await fileToDataURL(f);
-    const r = await api({event:"UPLOAD_IMAGE", photo:dataURL});
-    if (r?.code===0 && r?.data?.url){
-      insertAtCursor(textEl, `\n<img src="${r.data.url}" alt="">\n`);
-      charCount.textContent = String(textEl.value.length);
-      setStatus("");
-    }else{
-      throw new Error(prettifyError(r?.err || r?.message || "Upload failed"));
-    }
-  }catch(e){ setStatus("Image upload failed: " + e.message, true); }
-  finally{ btnAttach.disabled=false; btnAttach.textContent="Attach image"; }
-}
-
-function setReplyTarget(commentEl){
-  if (!allowReplies) return;
-  const cid = commentEl?.dataset?.cid; if (!cid) return;
-  const who = commentEl.querySelector('.nick')?.textContent || "someone";
-  const obj = state.all.get(cid);
-  const rootId = obj ? ((obj.rid && obj.rid !== "") ? obj.rid : (obj._id || obj.id)) : cid;
-
-  // If the root is locked, do not allow replying
-  const root = state.all.get(rootId);
-  if (root?.locked) { setStatus("Replies are locked for this thread.", true); return; }
-
-  replyTarget = { _id: cid, rid: rootId, nick: who };
-  replyName.textContent = who;
-  replyTo.style.display = "inline-flex";
-  textEl.focus();
-}
-function clearReplyTarget(){ replyTarget=null; replyName.textContent=""; replyTo.style.display="none"; }
-
-/* Admin operations */
-async function adminTogglePin(id){
-  try{
-    const item = state.all.get(id);
-    if (!item) return;
-    const currentPinned = state.tops.filter(x => Number(x.top) === 1).length;
-    const wantTop = Number(item.top) === 1 ? 0 : 1;
-    if (wantTop === 1 && currentPinned >= 3) { setStatus("Pin limit reached (3). Unpin something first.", true); return; }
-    const r = await api({event:'COMMENT_SET_FOR_ADMIN', url: PAGE_URL_PATH, id, set:{ top: wantTop }});
-    if (r && r.code === 0) await loadLatest(); else setStatus(r?.message || 'Pin failed', true);
-  }catch(e){ setStatus((e?.message) || 'Pin failed', true); }
-}
-async function adminDelete(id){
-  try{
-    const r = await api({event:'COMMENT_DELETE_FOR_ADMIN', url: PAGE_URL_PATH, id});
-    if (r && r.code === 0) await loadLatest(); else setStatus(r?.message || 'Delete failed', true);
-  }catch(e){ setStatus((e?.message) || 'Delete failed', true); }
-}
-async function adminToggleLock(id){
-  try{
-    const item = state.all.get(id);
-    if (!item) return;
-    const want = !item.locked;
-    const r = await api({ event:'COMMENT_TOGGLE_LOCK_FOR_ADMIN', url: PAGE_URL_PATH, id, lock: want });
-    if (r && r.code === 0) { await loadLatest(); }
-    else { setStatus(r?.message || 'Lock toggle failed', true); }
-  }catch(e){ setStatus((e?.message) || 'Lock toggle failed', true); }
-}
-
-/* Reorder pins (Up/Down) */
-async function adminReorderPin(id, dir){
-  // Build current pinned order from state.tops
-  const pinned = state.tops.filter(x => Number(x.top) === 1).map(x => x._id);
-  const idx = pinned.indexOf(id);
-  if (idx < 0) return;
-
-  if (dir === 'up' && idx > 0) {
-    [pinned[idx-1], pinned[idx]] = [pinned[idx], pinned[idx-1]];
-  } else if (dir === 'down' && idx < pinned.length - 1) {
-    [pinned[idx+1], pinned[idx]] = [pinned[idx], pinned[idx+1]];
-  } else {
+  // Block non-admin when posts locked
+  if (!isAdmin && !allowPosts) {
+    setStatus("Only admin can post right now", true);
     return;
   }
 
+  const payload = {
+    event: "COMMENT_SUBMIT",
+    url: PAGE_URL_PATH,
+    nick,
+    content
+  };
+
+  // reply targeting (only if globally allowed and not thread-locked)
+  if (allowReplies && replyTarget) {
+    const rootId = replyTarget.rid || replyTarget._id || replyTarget.id;
+    const root = state.all.get(rootId);
+    if (!root || !root.locked) {
+      payload.pid = replyTarget._id || replyTarget.id || "";
+      payload.rid = rootId || "";
+    }
+  }
+
+  btnSend.disabled=true;
   try{
-    const r = await api({ event:'COMMENT_REORDER_PINS_FOR_ADMIN', url: PAGE_URL_PATH, order: pinned });
-    if (r && r.code === 0) { await loadLatest(); }
-    else { setStatus(r?.message || 'Reorder failed', true); }
-  }catch(e){ setStatus(e?.message || 'Reorder failed', true); }
+    const r = await api(payload);
+    if (r && r.code === 0) {
+      textEl.value = "";
+      charCount.textContent = "0";
+      replyTarget = null;
+      replyTo.style.display = "none";
+      setStatus("Sent!");
+      setTimeout(()=>setStatus(""), 800);
+      // Optimistically reload
+      await loadLatest();
+      // If we have a websocket, server will also push refresh
+    } else {
+      throw new Error((r && (r.message||r.msg)) || "Send failed");
+    }
+  }catch(e){
+    setStatus(e?.message || "Send failed", true);
+  }finally{
+    btnSend.disabled=false;
+  }
 }
 
-/* Auth */
-async function adminLogin(){
-  const pass = (adminPass.value || "").trim();
-  if (!pass) { setStatus("Enter admin password.", true); return; }
-  setStatus("Signing in…");
+async function doAttach(){
+  const f = fileEl.files && fileEl.files[0];
+  if (!f) { setStatus("Choose an image first"); return; }
+  if (!/^image\//i.test(f.type)) { setStatus("Not an image file", true); return; }
+  const max = MAX_FILE_MB * 1024 * 1024;
+  if (f.size > max) { setStatus(`Image too large (max ${MAX_FILE_MB}MB)`, true); return; }
+
+  btnAttach.disabled = true;
+  setStatus("Uploading image…");
   try{
-    const r = await api({event:'LOGIN', password: pass});
-    if (r && r.accessToken){
+    const dataURL = await fileToDataURL(f);
+    const r = await api({ event:"UPLOAD_IMAGE", photo: dataURL, url: PAGE_URL_PATH });
+    if (r && r.code === 0 && r.data && r.data.url) {
+      insertAtCursor(textEl, (textEl.value && !textEl.value.endsWith('\n') ? '\n' : '') + `<img src="${r.data.url}">\n`);
+      fileEl.value = "";
+      fileInfo.textContent = "";
+      setStatus("Image attached");
+      setTimeout(()=>setStatus(""), 800);
+      textEl.focus();
+    } else {
+      throw new Error((r && (r.message || r.msg)) || "Image upload failed");
+    }
+  }catch(e){
+    setStatus(e?.message || "Image upload failed", true);
+  }finally{
+    btnAttach.disabled = false;
+  }
+}
+
+function onFileChosen(){
+  const f = fileEl.files && fileEl.files[0];
+  if (!f) { fileInfo.textContent=""; return; }
+  const mb = (f.size/1024/1024).toFixed(2);
+  fileInfo.textContent = `${f.name} • ${mb} MB`;
+}
+
+/* Delegated click handling on messages */
+messagesEl.addEventListener('click', async (e)=>{
+  const btn = e.target.closest('.action');
+  if (!btn) return;
+  const action = btn.dataset.action || btn.textContent;
+  const wrap = e.target.closest('.msg');
+  if (!wrap) return;
+  const cid = wrap.dataset.cid;
+  const c = state.all.get(cid);
+  if (!c) return;
+
+  if (action === 'reply'){
+    if (!allowReplies) { setStatus('Replies are disabled', true); return; }
+    // resolve root lock
+    const rootId = c.rid || c._id || c.id;
+    const root = state.all.get(rootId);
+    if (root && root.locked) { setStatus('Replies are locked for this thread', true); return; }
+    replyTarget = c;
+    replyName.textContent = c.nick || 'Anonymous';
+    replyTo.style.display = 'inline-flex';
+    textEl.focus();
+    return;
+  }
+
+  if (action === 'toggleReplies'){
+    const parent = btn.dataset.parent || (c._id || c.id);
+    if (expanded.has(parent)) expanded.delete(parent); else expanded.add(parent);
+    renderAll();
+    return;
+  }
+
+  if (!isAdmin) return;
+
+  if (action === 'adminDel'){
+    // one-click delete (no confirm)
+    try{
+      await api({ event:"COMMENT_DELETE_FOR_ADMIN", id: c._id || c.id, url: PAGE_URL_PATH });
+      setStatus('Deleted');
+      setTimeout(()=>setStatus(''), 600);
+      await loadLatest();
+    }catch(err){
+      setStatus(err?.message || 'Delete failed', true);
+    }
+    return;
+  }
+
+  if (action === 'adminPin'){
+    try{
+      const wantTop = Number(c.top) !== 1;
+      await api({ event:"COMMENT_SET_FOR_ADMIN", id: c._id || c.id, url: PAGE_URL_PATH, set:{ top: wantTop } });
+      await loadLatest();
+    }catch(err){
+      setStatus(err?.message || 'Pin toggle failed', true);
+    }
+    return;
+  }
+
+  if (action === 'adminLock'){
+    try{
+      const rootId = (c.rid && c.rid !== "") ? c.rid : (c._id || c.id);
+      const root = state.all.get(rootId);
+      const wantLock = !(root && root.locked);
+      await api({ event:"COMMENT_TOGGLE_LOCK_FOR_ADMIN", id: rootId, url: PAGE_URL_PATH, lock: wantLock });
+      await loadLatest();
+    }catch(err){
+      setStatus(err?.message || 'Lock toggle failed', true);
+    }
+    return;
+  }
+
+  if (action === 'pinUp' || action === 'pinDown'){
+    try{
+      const pinned = state.tops.filter(x => Number(x.top) === 1).map(x => x._id);
+      const idx = pinned.indexOf(c._id);
+      if (idx >= 0) {
+        const swap = action === 'pinUp' ? idx-1 : idx+1;
+        if (swap >=0 && swap < pinned.length) {
+          const tmp = pinned[idx]; pinned[idx] = pinned[swap]; pinned[swap] = tmp;
+          await api({ event:"COMMENT_REORDER_PINS_FOR_ADMIN", url: PAGE_URL_PATH, order: pinned });
+          await loadLatest();
+        }
+      }
+    }catch(err){
+      setStatus(err?.message || 'Reorder failed', true);
+    }
+    return;
+  }
+});
+
+/* Reply cancel */
+replyCancel.addEventListener('click', ()=>{
+  replyTarget = null;
+  replyTo.style.display = 'none';
+});
+
+/* Login / Logout */
+if (btnAdminLogin) btnAdminLogin.addEventListener('click', async ()=>{
+  const pw = (adminPass.value||'').trim();
+  if (!pw) { setStatus('Enter password', true); return; }
+  try{
+    const r = await api({ event:'LOGIN', password: pw });
+    if (r && r.code === 0 && r.accessToken) {
       TK_TOKEN = r.accessToken; localStorage.setItem('twikoo_access_token', TK_TOKEN);
       isAdmin = true; localStorage.setItem('twikoo_is_admin','1');
-      adminPass.value = "";
+      adminPass.value = '';
       await refreshAdminStatus();
       await loadLatest();
-      setStatus("Signed in.");
-    }else{
-      throw new Error(prettifyError(r?.message || "Login failed"));
+      setStatus('Logged in');
+      setTimeout(()=>setStatus(''), 800);
+    } else {
+      throw new Error((r && (r.message||r.msg)) || 'Login failed');
     }
-  }catch(e){ setStatus(e.message || "Login failed", true); }
-}
-function adminLogout(){
+  }catch(err){
+    setStatus(err?.message || 'Login failed', true);
+  }
+});
+
+if (btnAdminLogout) btnAdminLogout.addEventListener('click', ()=>{
   TK_TOKEN = null;
   localStorage.removeItem('twikoo_access_token');
   localStorage.removeItem('twikoo_is_admin');
   isAdmin = false;
   updateAdminUI();
-  setStatus("Signed out.");
-}
-
-/* Global toggles */
-async function onToggleRepliesChanged(){
-  if (!isAdmin) return;
-  const want = !!toggleRepliesEl.checked;
-  try{
-    const r = await api({ event:'SET_CONFIG_FOR_ADMIN', set:{ allowReplies: want } });
-    if (r && r.code === 0){
-      allowReplies = String(r.config?.ALLOW_REPLIES).toLowerCase() !== 'false';
-      updateAdminUI(); renderAll();
-    }else{ setStatus(r?.message || "Failed to update replies setting", true); }
-  }catch(e){ setStatus(e.message || "Failed to update replies setting", true); }
-}
-async function onTogglePostsChanged(){
-  if (!isAdmin) return;
-  const onlyAdminCanPost = !!togglePostsEl.checked;
-  try{
-    const r = await api({ event:'SET_CONFIG_FOR_ADMIN', set:{ allowPosts: !onlyAdminCanPost } });
-    if (r && r.code === 0){
-      allowPosts = String(r.config?.ALLOW_POSTS).toLowerCase() !== 'false';
-      updateAdminUI();
-    }else{ setStatus(r?.message || "Failed to update posting setting", true); }
-  }catch(e){ setStatus(e.message || "Failed to update posting setting", true); }
-}
-
-/* Events */
-messagesEl.addEventListener('click', (e)=>{
-  const t = e.target;
-  if (!t || !t.classList.contains('action')) return;
-  const msg = t.closest('.msg');
-  const cid = msg?.dataset?.cid;
-  const act = t.dataset.action;
-  if (act === 'reply') { setReplyTarget(msg); return; }
-  if (act === 'adminDel' && cid){ adminDelete(cid); return; }
-  if (act === 'adminPin' && cid){ adminTogglePin(cid); return; }
-  if (act === 'adminLock' && cid){ adminToggleLock(cid); return; }
-  if (act === 'toggleReplies'){
-    const parent = t.dataset.parent;
-    if (!parent) return;
-    if (expanded.has(parent)) expanded.delete(parent); else expanded.add(parent);
-    renderAll();
-    return;
-  }
-  if (act === 'pinUp' && cid){ adminReorderPin(cid,'up'); return; }
-  if (act === 'pinDown' && cid){ adminReorderPin(cid,'down'); return; }
+  setStatus('Logged out');
+  setTimeout(()=>setStatus(''), 800);
 });
 
-btnSend.addEventListener('click', sendMessage);
-btnAttach.addEventListener('click', attachImage);
-replyCancel.addEventListener('click', (e)=>{ e.preventDefault(); clearReplyTarget(); });
-fileEl.addEventListener('change', ()=>{
-  const f = fileEl.files && fileEl.files[0];
-  fileInfo.textContent = f ? `${f.name} (${Math.round(f.size/1024)} KB)` : '';
-});
+/* Composer events */
 textEl.addEventListener('input', ()=>{
-  const v = textEl.value;
-  charCount.textContent = String(v.length);
-  if (v.length > MAX_CHARS) charCount.style.color = "var(--danger)"; else charCount.style.color = "var(--muted)";
+  const v = textEl.value || '';
+  if (v.length > MAX_CHARS) {
+    textEl.value = v.slice(0, MAX_CHARS);
+  }
+  charCount.textContent = String(textEl.value.length);
 });
+fileEl.addEventListener('change', onFileChosen);
+btnAttach.addEventListener('click', doAttach);
+btnSend.addEventListener('click', doSend);
 
-btnAdminLogin?.addEventListener('click', adminLogin);
-btnAdminLogout?.addEventListener('click', adminLogout);
-toggleRepliesEl?.addEventListener('change', onToggleRepliesChanged);
-togglePostsEl?.addEventListener('change', onTogglePostsChanged);
+/* Load older */
 loadMoreBtn.addEventListener('click', loadOlder);
 
-/* Boot */
+/* INIT */
 (async function init(){
+  bindAdminTogglesOnce();
   await checkConnection();
   await refreshAdminStatus();
   await loadLatest();
   connectWS();
+
+  // If page not the admin view, kill admin panel visibility
+  if (!SHOW_ADMIN_PANEL && adminPanel) {
+    adminPanel.style.display = "none";
+  }
+
+  // If replies disabled on load, ensure no reply buttons visible (renderAll already handles it)
 })();
