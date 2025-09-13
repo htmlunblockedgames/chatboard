@@ -610,8 +610,7 @@ async function sendMessage(){
       }
       textEl.value=""; charCount.textContent="0"; fileEl.value=""; fileInfo.textContent=""; clearReplyTarget();
       await loadLatest();
-      highlightMessage(newId);
-      setStatus("");
+if (isAdmin) highlightMessage(newId);      setStatus("");
     }else{
       throw new Error(prettifyError(r?.message || "Unknown error"));
     }
