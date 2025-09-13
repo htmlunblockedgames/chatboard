@@ -399,45 +399,99 @@ function renderAll(){
 
 function applyTextGlowOnce(el){
   if (!el) return;
+  if (el.dataset.glowRunning === '1') return;
   const w = el.scrollWidth || el.getBoundingClientRect().width || 0;
   const pxPerSec = 250; // constant speed for long messages
   const durSec = Math.max(2, w / pxPerSec);
+
+  // portion of the total duration reserved for a smooth fade back to normal text
+  const fadeSec = Math.max(0.2, Math.min(0.6, durSec * 0.2)); // 20% of total, clamped
+  const fadeDelay = Math.max(0, durSec - fadeSec);
+
+  el.dataset.glowRunning = '1';
   el.classList.add('glow-text');
   el.style.setProperty('--glow-dur', durSec + 's');
-  const done = () => {
-    // Avoid white flash: apply fade first, then remove glow-text on the next frame
-    el.removeEventListener('animationend', done);
+  el.style.setProperty('--fade-dur', fadeSec + 's');
+
+  let faded = false;
+  const startFade = () => {
+    if (faded) return;
+    faded = true;
     el.classList.add('glow-fade');
-    el.style.removeProperty('--glow-dur');
-    requestAnimationFrame(() => {
-      try { el.classList.remove('glow-text'); } catch {}
-      setTimeout(() => { try { el.classList.remove('glow-fade'); } catch {} }, 400);
-    });
   };
-  el.addEventListener('animationend', done);
+
+  // begin fade near the end of the sweep so everything completes within total duration
+  const fadeTimer = setTimeout(startFade, Math.round(fadeDelay * 1000));
+
+  const onAnimEnd = () => {
+    // ensure fade has started (in case durations are very short)
+    startFade();
+  };
+
+  const onTransitionEnd = () => {
+    cleanup();
+  };
+
+  function cleanup(){
+    clearTimeout(fadeTimer);
+    el.removeEventListener('animationend', onAnimEnd);
+    el.removeEventListener('transitionend', onTransitionEnd);
+    // After fill is visible, drop gradient classes to finish cleanly with no flash
+    el.classList.remove('glow-text','glow-fade');
+    el.style.removeProperty('--glow-dur');
+    el.style.removeProperty('--fade-dur');
+    delete el.dataset.glowRunning;
+  }
+
+  el.addEventListener('animationend', onAnimEnd, { once:true });
+  el.addEventListener('transitionend', onTransitionEnd, { once:true });
 }
 
 function applyTextGlowRemainder(el, c){
   if (!el || !c) return;
+  if (el.dataset.glowRunning === '1') return;
+
   const w = el.scrollWidth || el.getBoundingClientRect().width || 0;
   const pxPerSec = 250; // constant speed for long messages
-  const durSec = Math.max(2, w / pxPerSec);
+  const totalDur = Math.max(2, w / pxPerSec);
+
   const created = Number(c.created || 0);
   const elapsed = Math.max(0, (Date.now() - created) / 1000);
-  const remain = Math.max(0, durSec - elapsed);
+  const remain = Math.max(0, totalDur - elapsed);
   if (remain <= 0.05) return;
+
+  const fadeSec = Math.max(0.2, Math.min(0.6, remain * 0.2));
+  const fadeDelay = Math.max(0, remain - fadeSec);
+
+  el.dataset.glowRunning = '1';
   el.classList.add('glow-text');
   el.style.setProperty('--glow-dur', remain + 's');
-  const done = () => {
-    el.removeEventListener('animationend', done);
+  el.style.setProperty('--fade-dur', fadeSec + 's');
+
+  let faded = false;
+  const startFade = () => {
+    if (faded) return;
+    faded = true;
     el.classList.add('glow-fade');
-    el.style.removeProperty('--glow-dur');
-    requestAnimationFrame(() => {
-      try { el.classList.remove('glow-text'); } catch {}
-      setTimeout(() => { try { el.classList.remove('glow-fade'); } catch {} }, 400);
-    });
   };
-  el.addEventListener('animationend', done);
+
+  const fadeTimer = setTimeout(startFade, Math.round(fadeDelay * 1000));
+
+  const onAnimEnd = () => { startFade(); };
+  const onTransitionEnd = () => { cleanup(); };
+
+  function cleanup(){
+    clearTimeout(fadeTimer);
+    el.removeEventListener('animationend', onAnimEnd);
+    el.removeEventListener('transitionend', onTransitionEnd);
+    el.classList.remove('glow-text','glow-fade');
+    el.style.removeProperty('--glow-dur');
+    el.style.removeProperty('--fade-dur');
+    delete el.dataset.glowRunning;
+  }
+
+  el.addEventListener('animationend', onAnimEnd, { once:true });
+  el.addEventListener('transitionend', onTransitionEnd, { once:true });
 }
 
 function shouldGlow(_c){

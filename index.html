@@ -186,7 +186,6 @@
 
     /* Text glow sweep on message content (applies when .glow-text is added) */
     .content .glow-text{
-      color: transparent;
       background: linear-gradient(90deg,
         #8f7200 0%,
         #d9c056 18%,
@@ -196,18 +195,22 @@
       background-size: 200% 100%;
       -webkit-background-clip: text;
       background-clip: text;
+      color: var(--text);               /* keep base text visible underneath */
+      -webkit-text-fill-color: transparent; /* show gradient inside glyphs */
       animation-name: glowSweep;
       animation-duration: var(--glow-dur, 2s);
-      animation-timing-function: ease-in-out; /* smooth ease-out then ease-in */
+      animation-timing-function: cubic-bezier(.2,.8,.2,1); /* smooth ease-out/in */
     }
 
     .content .glow-fade{
-      background: none !important;
-      -webkit-background-clip: initial;
-      background-clip: initial;
-      color: var(--text) !important;
-      text-shadow: 0 0 6px rgba(245,196,0,.12);
-      transition: color .35s ease, text-shadow .35s ease;
+      /* keep gradient present while text fades back to normal to avoid white flash */
+      transition:
+        color var(--fade-dur, .3s) ease-in-out,
+        -webkit-text-fill-color var(--fade-dur, .3s) ease-in-out,
+        text-shadow var(--fade-dur, .3s) ease-in-out;
+      -webkit-text-fill-color: var(--text);
+      color: var(--text);
+      text-shadow: none;
     }
     @keyframes glowSweep{
       from { background-position:   0% 0; }
