@@ -1,6 +1,6 @@
 /* Poly Track Chatboard – index.js */
 /* Works with the provided index.html structure and Twikoo Worker backend */
-console.log("chatboard.index.js v7");
+console.log("chatboard.index.js v8");
 
 /* ===== Configure if you move host/path ===== */
 const WORKER_URL    = "https://twikoo-cloudflare.ertertertet07.workers.dev";
@@ -20,6 +20,7 @@ const fileInfo=$("fileInfo"), statusEl=$("status"), connEl=$("conn");
 const adminPanel=$("adminPanel"), adminPass=$("adminPass"), btnAdminLogin=$("btnAdminLogin"),
       btnAdminLogout=$("btnAdminLogout"), adminLoginRow=$("adminLoginRow"),
       adminControls=$("adminControls"), pinCountEl=$("pinCount"), adminNote=$("adminNote");
+const statTotalEl=$("statTotal"), statRepliesEl=$("statReplies"), statTodayEl=$("statToday");
 
 const limitMbEl=$("limitMb"), limitChars=$("limitChars"), limitChars2=$("limitChars2"), charCount=$("charCount");
 const replyTo=$("replyTo"), replyName=$("replyName"), replyCancel=$("replyCancel");
@@ -157,6 +158,20 @@ function revealAdminIfRequested(){
 function updateAdminUI(){
   const pinned = state.tops.filter(x => Number(x.top) === 1).length;
   pinCountEl.textContent = String(pinned);
+
+  // Stats
+  if (statTotalEl && statRepliesEl && statTodayEl){
+    const total = state.all.size;
+    const tops = state.tops.length;
+    const replies = Math.max(0, total - tops);
+    const startOfDay = new Date(); startOfDay.setHours(0,0,0,0);
+    let today = 0;
+    for (const v of state.all.values()) if (Number(v.created||0) >= startOfDay.getTime()) today++;
+    statTotalEl.textContent = String(total);
+    statRepliesEl.textContent = String(replies);
+    statTodayEl.textContent = String(today);
+  }
+
   if (isAdmin) {
     adminLoginRow.style.display = 'none';
     adminControls.style.display = 'flex';
@@ -244,7 +259,6 @@ function mergeList(list){
   };
 
   (Array.isArray(list) ? list : []).forEach(top => {
-    // keep existing rid/pid if provided (don’t force top-level)
     pushItem(top);
     if (Array.isArray(top.replies)) top.replies.forEach(r => pushItem(r));
   });
@@ -283,7 +297,8 @@ function mergeList(list){
 
   state.all = temp;
   state.tops = Array.from(temp.values()).filter(x => (x.rid || "") === "");
-  state.tops.sort((a,b)=>(b.created||0)-(a.created||0));
+  // PINNED FIRST, then newest
+  state.tops.sort((a,b)=> (Number(b.top||0) - Number(a.top||0)) || (b.created||0)-(a.created||0));
   earliestMainCreated = state.tops.length ? Math.min(...state.tops.map(x=>x.created||Date.now())) : null;
 }
 
