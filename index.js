@@ -97,7 +97,8 @@ function updateAdminUI(){
 async function refreshAdminStatus(){
   const r = await api({event:'GET_CONFIG'});
   const adminFlag = r && (truthy(r.isAdmin) || truthy(r.admin) || (r.data && (truthy(r.data.isAdmin) || truthy(r.data.admin))));
-  isAdmin = !!adminFlag;
+  const cached = (localStorage.getItem('twikoo_is_admin') === '1') && !!TK_TOKEN;
+  isAdmin = !!(adminFlag || cached);
   const q = new URLSearchParams(location.search);
   const requested = (q.get('admin') === '1' || location.hash === '#admin');
   adminPanel.style.display = (isAdmin || requested) ? 'grid' : 'none';
@@ -108,6 +109,8 @@ async function adminLogin(){
   if (!pw) { setStatus('Enter password', true); return; }
   const r = await api({event:'LOGIN', password: pw});
   if (r && r.code === 0) {
+    isAdmin = true;
+    localStorage.setItem('twikoo_is_admin','1');
     adminPanel.style.display = 'grid';
     await refreshAdminStatus();
     await loadLatest();
@@ -117,6 +120,8 @@ async function adminLogin(){
   }
 }
 async function adminLogout(){
+  isAdmin = false;
+  localStorage.removeItem('twikoo_is_admin');
   TK_TOKEN = null;
   localStorage.removeItem('twikoo_access_token');
   await refreshAdminStatus();
