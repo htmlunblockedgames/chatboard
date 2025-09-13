@@ -35,7 +35,6 @@
     #adminNote{font-size:12px;color:var(--muted)}
     .admin-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}
     .tag{font-size:11px;border:1px solid var(--border-2);border-radius:999px;padding:3px 8px;color:var(--muted);background:#f9fafb}
-    /* Connection status pill (JS adds .ok / .bad) */
     #conn.ok{ color: var(--ok); border-color:#c7e8d5; background:#eaf7f0; }
     #conn.bad{ color: var(--danger); border-color:#f7c7c5; background:#fdecea; }
 
@@ -141,7 +140,6 @@
       100%{ background-position: 10px -10px, -12px 16px, 0 0; }
     }
 
-    /* Admin avatar + name glow */
     .avatar.admin{
       background: radial-gradient(circle at 30% 30%, #fff6c2, #ffd84a 40%, #f8b500 70%);
       border-color:#f5c400;
@@ -163,7 +161,6 @@
       0%   { background-position:   0% 0; }
       100% { background-position: 200% 0; }
     }
-
     /* Sliding highlight for admin message body (one-shot) */
     @keyframes adminSlideGlow{
       0%   { background-position: -200% 0; }
@@ -205,6 +202,11 @@
         <label class="tag" style="display:inline-flex;gap:6px;align-items:center">
           <input type="checkbox" id="toggleReplies">
           Replies enabled
+        </label>
+        <!-- NEW: disable all non-admin posts -->
+        <label class="tag" style="display:inline-flex;gap:6px;align-items:center">
+          <input type="checkbox" id="togglePosts">
+          Only admin can post
         </label>
         <button id="btnAdminLogout" class="btn">Logout</button>
       </div>
@@ -250,6 +252,6 @@
     </section>
   </main>
 
-  <script src="index.js?v=12"></script>
+  <script src="index.js?v=13"></script>
 </body>
 </html>

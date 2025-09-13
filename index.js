@@ -1,5 +1,5 @@
 /* Poly Track Chatboard – index.js */
-console.log("chatboard.index.js v12");
+console.log("chatboard.index.js v13");
 
 const WORKER_URL    = "https://twikoo-cloudflare.ertertertet07.workers.dev";
 const PAGE_URL_PATH = "/chatboard/";
@@ -21,10 +21,7 @@ function connectWS(){
     ws.onmessage = (e) => {
       if (typeof e.data === 'string') {
         if (e.data === 'pong') return;
-        try {
-          const msg = JSON.parse(e.data);
-          if (msg && msg.type === "refresh") loadLatest();
-        } catch {}
+        try { const msg = JSON.parse(e.data); if (msg && msg.type === "refresh") loadLatest(); } catch {}
       }
     };
     ws.onclose = ws.onerror = () => {
@@ -51,6 +48,7 @@ const adminPanel=$("adminPanel"), adminPass=$("adminPass"), btnAdminLogin=$("btn
       adminControls=$("adminControls"), pinCountEl=$("pinCount"), adminNote=$("adminNote");
 const statTotalEl=$("statTotal"), statRepliesEl=$("statReplies"), statTodayEl=$("statToday");
 const toggleRepliesEl=$("toggleReplies");
+const togglePostsEl=$("togglePosts");
 
 const limitMbEl=$("limitMb"), limitChars=$("limitChars"), limitChars2=$("limitChars2"), charCount=$("charCount");
 const replyTo=$("replyTo"), replyName=$("replyName"), replyCancel=$("replyCancel");
@@ -73,6 +71,7 @@ let isAdmin = false;
 let rateBlockedUntil = 0;
 const flashedOnce = new Set();
 let allowReplies = true; // global toggle
+let allowPosts = true;   // when false, only admin may post
 
 limitMbEl.textContent=MAX_FILE_MB;
 limitChars.textContent=MAX_CHARS;
@@ -179,7 +178,7 @@ async function api(eventObj){
   throw lastErr || new Error("Request failed");
 }
 
-/* Admin UI + replies toggle */
+/* Admin UI + toggles */
 function updateAdminUI(){
   const counts = serverCounts;
   const pinned = (counts && typeof counts.pinned === 'number')
@@ -214,6 +213,20 @@ function updateAdminUI(){
     toggleRepliesEl.disabled = !isAdmin;
     toggleRepliesEl.parentElement.style.display = isAdmin ? 'inline-flex' : 'none';
   }
+  if (togglePostsEl) {
+    // checked === only admin can post
+    togglePostsEl.checked = !allowPosts;
+    togglePostsEl.disabled = !isAdmin;
+    togglePostsEl.parentElement.style.display = isAdmin ? 'inline-flex' : 'none';
+  }
+  // Disable Send for non-admin when posting is locked
+  if (!isAdmin && !allowPosts) {
+    btnSend.disabled = true;
+    btnSend.title = "Only admin can post right now";
+  } else {
+    btnSend.disabled = false;
+    btnSend.title = "";
+  }
 }
 
 async function refreshAdminStatus(){
@@ -228,8 +241,8 @@ async function refreshAdminStatus(){
   const cached = (localStorage.getItem('twikoo_is_admin') === '1') && !!TK_TOKEN;
   isAdmin = !!(adminFlag || cached);
 
-  // pick ALLOW_REPLIES from config (defaults to true)
   allowReplies = !!(r && r.config && String(r.config.ALLOW_REPLIES).toLowerCase() !== 'false');
+  allowPosts   = !!(r && r.config && String(r.config.ALLOW_POSTS).toLowerCase() !== 'false');
   updateAdminUI();
 }
 
@@ -465,6 +478,7 @@ function prettifyError(m){ if(!m) return "Unexpected error"; const s=String(m);
 async function sendMessage(){
   const nickRaw = nickEl.value.trim();
   const nick = isAdmin ? "Poly Track Administrator" : (nickRaw || "Anonymous");
+  if (!isAdmin && !allowPosts) { setStatus("Only admin can post right now.", true); return; }
   const html = textEl.value.trim();
   if (!html){ setStatus("Type a message first.", true); return; }
   if (html.length > MAX_CHARS){ setStatus(`Message too long. Max ${MAX_CHARS} characters.`, true); return; }
@@ -603,6 +617,25 @@ if (toggleRepliesEl) toggleRepliesEl.addEventListener('change', async ()=>{
   }
 });
 
+if (togglePostsEl) togglePostsEl.addEventListener('change', async ()=>{
+  if (!isAdmin) { togglePostsEl.checked = !allowPosts; return; }
+  const onlyAdmin = !!togglePostsEl.checked;
+  const newAllowPosts = !onlyAdmin;
+  try{
+    const resp = await api({event:'SET_CONFIG_FOR_ADMIN', set:{ allowPosts: newAllowPosts }});
+    if (resp?.code === 0){
+      allowPosts = newAllowPosts;
+      updateAdminUI();
+      setStatus(newAllowPosts ? 'All users can post' : 'Only admin can post');
+    } else {
+      throw new Error(resp?.message || 'Failed to save');
+    }
+  }catch(e){
+    setStatus((e?.message) || 'Failed to save', true);
+    togglePostsEl.checked = !allowPosts;
+  }
+});
+
 textEl.addEventListener("input", ()=>{
   const n=textEl.value.length; charCount.textContent=String(n);
   if (n>MAX_CHARS) setStatus(`Message too long. Max ${MAX_CHARS} characters.`, true);
@@ -615,30 +648,25 @@ fileEl.addEventListener("change", ()=>{
 
 messagesEl.addEventListener("click",(e)=>{
   const card = e.target.closest('.msg');
-  const btn = e.target.closest('[data-action="reply"]');
-  const toggle = e.target.closest('[data-action="toggleReplies"]');
-  const pin = e.target.closest('[data-action="adminPin"]');
-  const del = e.target.closest('[data-action="adminDel"]');
-  const lock = e.target.closest('[data-action="adminLock"]');
-
-  if (btn && card){ setReplyTarget(card); return; }
-  if (allowReplies && toggle){
-    const pid = toggle.dataset.parent;
-    const cont = document.getElementById("replies-"+pid);
-    const parent = state.all.get(pid);
-    if (!cont || !parent) return;
-    if (expanded.has(pid)){ cont.style.display="none"; expanded.delete(pid); }
-    else { if (!cont.childElementCount) buildReplies(cont, parent); cont.style.display="flex"; expanded.add(pid); }
-    toggle.textContent = expanded.has(pid)
-      ? ((parent.children?.length||0)===1 ? 'Close Reply' : 'Close Replies')
-      : ((parent.children?.length||0)===1 ? 'Show Reply' : 'Show Replies');
-    return;
+  const btn = e.target.closest('[data-action]');
+  if (!card || !btn) return;
+  const act = btn.dataset.action;
+  const cid = card.dataset.cid;
+  if (act === 'reply') setReplyTarget(card);
+  else if (act === 'adminDel') adminDelete(cid);
+  else if (act === 'adminPin') adminTogglePin(btn.dataset.cid || cid);
+  else if (act === 'adminLock') adminToggleLock(btn.dataset.cid || cid);
+  else if (act === 'toggleReplies') {
+    const parent = btn.dataset.parent || cid;
+    if (expanded.has(parent)) expanded.delete(parent); else expanded.add(parent);
+    renderAll();
   }
-  if (pin){ adminTogglePin(pin.dataset.cid); return; }
-  if (del){ adminDelete(del.dataset.cid); return; }
-  if (lock){ adminToggleLock(lock.dataset.cid); return; }
 });
 
-/* Boot */
-checkConnection().then(()=>refreshAdminStatus()).then(loadLatest);
-connectWS();
+/* Init */
+(async ()=>{
+  await checkConnection();
+  await refreshAdminStatus();
+  await loadLatest();
+  connectWS();
+})();
