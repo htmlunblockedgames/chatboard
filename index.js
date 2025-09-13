@@ -46,6 +46,7 @@ const setStatus=(t,isError=false)=>{
 };
 function fileToDataURL(file){ return new Promise((res,rej)=>{ const fr=new FileReader(); fr.onerror=()=>rej(fr.error||new Error("FileReader error")); fr.onload=()=>res(fr.result); fr.readAsDataURL(file); }); }
 function insertAtCursor(el,text){ const s=el.selectionStart??el.value.length, e=el.selectionEnd??el.value.length; el.value=el.value.slice(0,s)+text+el.value.slice(e); const pos=s+text.length; el.setSelectionRange(pos,pos); el.focus(); }
+function truthy(v){ return v === true || v === 1 || v === '1' || v === 'true'; }
 
 /* Client-side nickname guard */
 function isForbiddenNick(nick){
@@ -94,8 +95,11 @@ function updateAdminUI(){
 }
 async function refreshAdminStatus(){
   const r = await api({event:'GET_CONFIG'});
-  isAdmin = !!(r && (r.isAdmin === true || (r.data && r.data.isAdmin === true) || r.admin === true));
-  if (isAdmin) adminPanel.style.display='grid';
+  const adminFlag = r && (truthy(r.isAdmin) || truthy(r.admin) || (r.data && (truthy(r.data.isAdmin) || truthy(r.data.admin))));
+  isAdmin = !!adminFlag;
+  const q = new URLSearchParams(location.search);
+  const requested = (q.get('admin') === '1' || location.hash === '#admin');
+  adminPanel.style.display = (isAdmin || requested) ? 'grid' : 'none';
   updateAdminUI();
 }
 async function adminLogin(){
@@ -103,6 +107,7 @@ async function adminLogin(){
   if (!pw) { setStatus('Enter password', true); return; }
   const r = await api({event:'LOGIN', password: pw});
   if (r && r.code === 0) {
+    adminPanel.style.display = 'grid';
     await refreshAdminStatus();
     await loadLatest();
     setStatus('Admin logged in');
