@@ -1,5 +1,5 @@
 /* Poly Track Chatboard – index.js */
-console.log("chatboard.index.js v13");
+console.log("chatboard.index.js v14");
 
 const WORKER_URL    = "https://twikoo-cloudflare.ertertertet07.workers.dev";
 const PAGE_URL_PATH = "/chatboard/";
@@ -96,6 +96,7 @@ function parseRetryAfter(h){
 }
 function authorIsAdmin(c){ return String((c && c.nick) || '') === 'Poly Track Administrator'; }
 
+/* Render-safe: turn newlines into <br>, allow http(s) links and data/https images */
 function renderSafeContent(input){
   const text = String(input ?? "");
   const tpl = document.createElement('template');
@@ -214,8 +215,7 @@ function updateAdminUI(){
     toggleRepliesEl.parentElement.style.display = isAdmin ? 'inline-flex' : 'none';
   }
   if (togglePostsEl) {
-    // checked === only admin can post
-    togglePostsEl.checked = !allowPosts;
+    togglePostsEl.checked = !allowPosts; // checked = only admin can post
     togglePostsEl.disabled = !isAdmin;
     togglePostsEl.parentElement.style.display = isAdmin ? 'inline-flex' : 'none';
   }
@@ -417,6 +417,21 @@ function buildReplies(container, parent){
   for (const ch of kids) container.appendChild(renderMsg(ch));
 }
 
+/* Newline spam protection (client-side) */
+function sanitizeOutgoing(s){
+  if (!s) return "";
+  s = String(s).replace(/\r\n?/g, "\n");
+  // Collapse excessive blank lines
+  s = s.replace(/\n{3,}/g, "\n\n");
+  // Limit total lines
+  const MAX_LINES = 30;
+  const lines = s.split("\n");
+  if (lines.length > MAX_LINES) {
+    s = lines.slice(0, MAX_LINES).join("\n") + "\n…";
+  }
+  return s;
+}
+
 /* Loading */
 async function loadLatest(){
   if (loading) return; loading=true;
@@ -479,8 +494,9 @@ async function sendMessage(){
   const nickRaw = nickEl.value.trim();
   const nick = isAdmin ? "Poly Track Administrator" : (nickRaw || "Anonymous");
   if (!isAdmin && !allowPosts) { setStatus("Only admin can post right now.", true); return; }
-  const html = textEl.value.trim();
-  if (!html){ setStatus("Type a message first.", true); return; }
+  const htmlRaw = textEl.value.trim();
+  if (!htmlRaw){ setStatus("Type a message first.", true); return; }
+  const html = sanitizeOutgoing(htmlRaw);
   if (html.length > MAX_CHARS){ setStatus(`Message too long. Max ${MAX_CHARS} characters.`, true); return; }
 
   let pid, rid;
@@ -588,85 +604,88 @@ if (btnAdminLogin) btnAdminLogin.addEventListener('click', async ()=>{
   if (r && r.code === 0) {
     isAdmin = true; localStorage.setItem('twikoo_is_admin','1');
     if (adminPanel && SHOW_ADMIN_PANEL) adminPanel.style.display = 'grid';
-    await refreshAdminStatus(); await loadLatest();
-    setStatus('Admin logged in');
-  } else { setStatus(r?.message || 'Login failed', true); }
-});
-if (btnAdminLogout) btnAdminLogout.addEventListener('click', async ()=>{
-  isAdmin = false; localStorage.removeItem('twikoo_is_admin');
-  TK_TOKEN = null; localStorage.removeItem('twikoo_access_token');
-  await refreshAdminStatus(); setStatus('Logged out');
-});
-
-if (toggleRepliesEl) toggleRepliesEl.addEventListener('change', async ()=>{
-  if (!isAdmin) { toggleRepliesEl.checked = allowReplies; return; }
-  const val = !!toggleRepliesEl.checked;
-  try{
-    const resp = await api({event:'SET_CONFIG_FOR_ADMIN', set:{ allowReplies: val }});
-    if (resp?.code === 0){
-      allowReplies = val;
-      clearReplyTarget();
-      renderAll();
-      setStatus(`Replies ${val ? 'enabled' : 'disabled'}`);
-    } else {
-      throw new Error(resp?.message || 'Failed to save');
-    }
-  }catch(e){
-    setStatus((e?.message) || 'Failed to save', true);
-    toggleRepliesEl.checked = allowReplies;
+    await refreshAdminStatus();
+    await loadLatest();
+  } else {
+    setStatus(prettifyError(r?.message || 'Login failed'), true);
   }
 });
 
-if (togglePostsEl) togglePostsEl.addEventListener('change', async ()=>{
-  if (!isAdmin) { togglePostsEl.checked = !allowPosts; return; }
-  const onlyAdmin = !!togglePostsEl.checked;
-  const newAllowPosts = !onlyAdmin;
+if (btnAdminLogout) btnAdminLogout.addEventListener('click', ()=>{
+  isAdmin = false;
+  TK_TOKEN = null;
+  localStorage.removeItem('twikoo_access_token');
+  localStorage.removeItem('twikoo_is_admin');
+  updateAdminUI();
+  setStatus('Logged out.');
+});
+
+if (toggleRepliesEl) toggleRepliesEl.addEventListener('change', async (e)=>{
+  if (!isAdmin) { e.preventDefault(); updateAdminUI(); return; }
   try{
-    const resp = await api({event:'SET_CONFIG_FOR_ADMIN', set:{ allowPosts: newAllowPosts }});
-    if (resp?.code === 0){
-      allowPosts = newAllowPosts;
+    const want = !!e.target.checked;
+    const r = await api({event:'SET_CONFIG_FOR_ADMIN', set:{ allowReplies: want }});
+    if (r?.code===0){
+      allowReplies = String(r.config?.ALLOW_REPLIES ?? 'true').toLowerCase() !== 'false';
+      updateAdminUI(); await loadLatest();
+    }else{ throw new Error(r?.message || 'Failed to update'); }
+  }catch(err){ setStatus(prettifyError(err.message), true); updateAdminUI(); }
+});
+
+if (togglePostsEl) togglePostsEl.addEventListener('change', async (e)=>{
+  if (!isAdmin) { e.preventDefault(); updateAdminUI(); return; }
+  try{
+    const onlyAdmin = !!e.target.checked; // checked means only admin can post
+    const r = await api({event:'SET_CONFIG_FOR_ADMIN', set:{ allowPosts: !onlyAdmin }});
+    if (r?.code===0){
+      allowPosts = String(r.config?.ALLOW_POSTS ?? 'true').toLowerCase() !== 'false';
       updateAdminUI();
-      setStatus(newAllowPosts ? 'All users can post' : 'Only admin can post');
-    } else {
-      throw new Error(resp?.message || 'Failed to save');
-    }
-  }catch(e){
-    setStatus((e?.message) || 'Failed to save', true);
-    togglePostsEl.checked = !allowPosts;
+    }else{ throw new Error(r?.message || 'Failed to update'); }
+  }catch(err){ setStatus(prettifyError(err.message), true); updateAdminUI(); }
+});
+
+document.addEventListener('click', (ev)=>{
+  const t = ev.target;
+  // reply
+  if (t && t.classList.contains('action') && t.dataset.action === 'reply') {
+    const root = t.closest('.msg'); if (root) setReplyTarget(root);
   }
-});
-
-textEl.addEventListener("input", ()=>{
-  const n=textEl.value.length; charCount.textContent=String(n);
-  if (n>MAX_CHARS) setStatus(`Message too long. Max ${MAX_CHARS} characters.`, true);
-  else if (statusEl.textContent.startsWith("Message too long")) setStatus("");
-});
-fileEl.addEventListener("change", ()=>{
-  const f=fileEl.files&&fileEl.files[0];
-  fileInfo.textContent = f ? `${f.name} · ${(f.size/1024/1024).toFixed(2)} MB` : "";
-});
-
-messagesEl.addEventListener("click",(e)=>{
-  const card = e.target.closest('.msg');
-  const btn = e.target.closest('[data-action]');
-  if (!card || !btn) return;
-  const act = btn.dataset.action;
-  const cid = card.dataset.cid;
-  if (act === 'reply') setReplyTarget(card);
-  else if (act === 'adminDel') adminDelete(cid);
-  else if (act === 'adminPin') adminTogglePin(btn.dataset.cid || cid);
-  else if (act === 'adminLock') adminToggleLock(btn.dataset.cid || cid);
-  else if (act === 'toggleReplies') {
-    const parent = btn.dataset.parent || cid;
-    if (expanded.has(parent)) expanded.delete(parent); else expanded.add(parent);
+  // open/close replies list
+  if (t && t.classList.contains('action') && t.dataset.action === 'toggleReplies') {
+    const pid = t.dataset.parent; if (!pid) return;
+    if (expanded.has(pid)) expanded.delete(pid); else expanded.add(pid);
     renderAll();
   }
+  // admin: pin
+  if (t && t.classList.contains('action') && t.dataset.action === 'adminPin') {
+    if (!isAdmin) return;
+    const id = t.dataset.cid; if (id) adminTogglePin(id);
+  }
+  // admin: delete
+  if (t && t.classList.contains('action') && t.dataset.action === 'adminDel') {
+    if (!isAdmin) return;
+    const id = t.dataset.cid; if (id) adminDelete(id);
+  }
+  // admin: lock
+  if (t && t.classList.contains('action') && t.dataset.action === 'adminLock') {
+    if (!isAdmin) return;
+    const id = t.dataset.cid; if (id) adminToggleLock(id);
+  }
+});
+
+textEl.addEventListener('input', ()=>{
+  charCount.textContent = String(textEl.value.length);
+});
+
+fileEl.addEventListener('change', ()=>{
+  const f = fileEl.files && fileEl.files[0];
+  fileInfo.textContent = f ? `${f.name} (${Math.round(f.size/1024)} KB)` : '';
 });
 
 /* Init */
-(async ()=>{
+(async function init(){
   await checkConnection();
   await refreshAdminStatus();
-  await loadLatest();
   connectWS();
+  await loadLatest();
 })();

@@ -146,13 +146,12 @@
       color:#2a1f00;
       font-weight:900;
       letter-spacing:.5px;
-      /* subtle shimmer + glow */
       background-size: 200% 200%;
       animation: adminAvatarShimmer 4s linear infinite;
       box-shadow: inset 0 0 0 1px #f5c400, 0 0 10px rgba(245,196,0,.18);
     }
 
-    /* Admin username – dimmer, indefinite shimmer */
+    /* Indefinite, subtle shimmer for admin username */
     .nick.admin-glow{
       color: transparent;
       background: linear-gradient(90deg, #b89200 0%, #e8cf64 20%, #fff2a8 50%, #e8cf64 80%, #b89200 100%);
@@ -165,6 +164,10 @@
     @keyframes adminNameShimmer{
       0%   { background-position:   0% 0; }
       100% { background-position: 200% 0; }
+    }
+    @keyframes adminAvatarShimmer{
+      0%   { background-position: 0% 0%; }
+      100% { background-position: 200% 200%; }
     }
 
     /* Sliding highlight overlay for admin message body (one-shot) */
@@ -184,12 +187,6 @@
     }
     @keyframes slideSweep{
       to { transform: translateX(120%); }
-    }
-
-    /* Subtle shimmer for the admin avatar background */
-    @keyframes adminAvatarShimmer{
-      0%   { background-position: 0% 0%; }
-      100% { background-position: 200% 200%; }
     }
   </style>
 </head>
