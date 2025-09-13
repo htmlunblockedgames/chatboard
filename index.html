@@ -146,38 +146,50 @@
       color:#2a1f00;
       font-weight:900;
       letter-spacing:.5px;
+      /* subtle shimmer + glow */
+      background-size: 200% 200%;
+      animation: adminAvatarShimmer 4s linear infinite;
+      box-shadow: inset 0 0 0 1px #f5c400, 0 0 10px rgba(245,196,0,.18);
     }
-    /* Indefinite sliding/glow for admin username */
+
+    /* Admin username – dimmer, indefinite shimmer */
     .nick.admin-glow{
       color: transparent;
-      background: linear-gradient(90deg, #f5c400 0%, #ffe380 20%, #fff6c2 50%, #ffe380 80%, #f5c400 100%);
+      background: linear-gradient(90deg, #b89200 0%, #e8cf64 20%, #fff2a8 50%, #e8cf64 80%, #b89200 100%);
       background-size: 200% 100%;
       -webkit-background-clip: text;
       background-clip: text;
-      animation: adminNameShimmer 2.5s linear infinite;
-      text-shadow: 0 0 8px rgba(245,196,0,.35), 0 0 18px rgba(245,196,0,.2);
+      animation: adminNameShimmer 3.2s linear infinite;
+      text-shadow: 0 0 4px rgba(245,196,0,.18), 0 0 10px rgba(245,196,0,.10);
     }
     @keyframes adminNameShimmer{
       0%   { background-position:   0% 0; }
       100% { background-position: 200% 0; }
     }
-    /* Sliding highlight for admin message body (one-shot) */
-    @keyframes adminSlideGlow{
-      0%   { background-position: -200% 0; }
-      100% { background-position:  200% 0; }
-    }
-    .flash{
-      color: transparent;
+
+    /* Sliding highlight overlay for admin message body (one-shot) */
+    .content.flash{ position: relative; }
+    .content.flash::after{
+      content:"";
+      position:absolute; inset:0; pointer-events:none;
       background: linear-gradient(90deg,
-        var(--text) 0%,
-        var(--text) 40%,
-        #ffe380 50%,
-        var(--text) 60%,
-        var(--text) 100%);
-      background-size: 200% 100%;
-      -webkit-background-clip: text;
-      background-clip: text;
-      animation: adminSlideGlow 1.2s ease-out forwards;
+        rgba(255,255,255,0) 0%,
+        rgba(255, 227, 128, 0.00) 42%,
+        rgba(255, 227, 128, 0.60) 50%,
+        rgba(255, 227, 128, 0.00) 58%,
+        rgba(255,255,255,0) 100%);
+      transform: translateX(-120%);
+      animation: slideSweep 1.1s ease-out forwards;
+      mix-blend-mode: multiply;
+    }
+    @keyframes slideSweep{
+      to { transform: translateX(120%); }
+    }
+
+    /* Subtle shimmer for the admin avatar background */
+    @keyframes adminAvatarShimmer{
+      0%   { background-position: 0% 0%; }
+      100% { background-position: 200% 200%; }
     }
   </style>
 </head>
@@ -203,7 +215,6 @@
           <input type="checkbox" id="toggleReplies">
           Replies enabled
         </label>
-        <!-- NEW: disable all non-admin posts -->
         <label class="tag" style="display:inline-flex;gap:6px;align-items:center">
           <input type="checkbox" id="togglePosts">
           Only admin can post
@@ -252,6 +263,6 @@
     </section>
   </main>
 
-  <script src="index.js?v=13"></script>
+  <script src="index.js?v=14"></script>
 </body>
 </html>
