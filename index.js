@@ -362,12 +362,23 @@ function applyTextGlowOnce(el){
   el.classList.add('glow-text');
   el.style.setProperty('--glow-dur', durSec + 's');
   const done = () => {
+    // transition to readable black text smoothly
     el.classList.remove('glow-text');
+    el.classList.add('glow-fade');
     el.style.removeProperty('--glow-dur');
     el.removeEventListener('animationend', done);
+    // remove the fade helper class after it completes
+    setTimeout(() => { try { el.classList.remove('glow-fade'); } catch {} }, 400);
   };
   el.addEventListener('animationend', done);
 }
+function shouldGlow(c){
+  const now = Date.now();
+  const isRecent = (now - Number(c.created || 0)) <= 5000; // last 5s
+  const isDevPinned = authorIsAdmin(c) && Number(c.top) === 1 && ((c.rid || "") === ""); // admin + pinned root
+  return isDevPinned || isRecent;
+}
+
 
 function renderMsg(c){
   const cid = c._id || c.id;
@@ -406,8 +417,8 @@ function renderMsg(c){
   body.classList.add('glow-target');
   content.appendChild(body);
 
-  // Apply glow to ALL messages once when rendered
-  applyTextGlowOnce(body);
+  // Conditionally apply glow (dev pinned always; messages from last 5s)
+  if (shouldGlow(c)) applyTextGlowOnce(body);
 
   if (adminAuthor && !flashedOnce.has(cid)) {
     // relying on text sweep only

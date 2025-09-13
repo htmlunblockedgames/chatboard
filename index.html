@@ -167,12 +167,17 @@
     /* Admin username – dimmer, indefinite shimmer */
     .nick.admin-glow{
       color: transparent;
-      background: linear-gradient(90deg, #b89200 0%, #e8cf64 20%, #fff2a8 50%, #e8cf64 80%, #b89200 100%);
+      background: linear-gradient(90deg,
+        #9e7f00 0%,
+        #d7bf52 20%,
+        #ffe48a 50%,
+        #d7bf52 80%,
+        #9e7f00 100%);
       background-size: 200% 100%;
       -webkit-background-clip: text;
       background-clip: text;
       animation: adminNameShimmer 3.2s linear infinite;
-      text-shadow: 0 0 4px rgba(245,196,0,.18), 0 0 10px rgba(245,196,0,.10);
+      text-shadow: 0 0 3px rgba(245,196,0,.12), 0 0 6px rgba(245,196,0,.06);
     }
     @keyframes adminNameShimmer{
       0%   { background-position:   0% 0; }
@@ -183,18 +188,26 @@
     .content .glow-text{
       color: transparent;
       background: linear-gradient(90deg,
-        #9f7a00 0%,
-        #e6c956 18%,
-        #fff2a8 45%,
-        #e6c956 82%,
-        #9f7a00 100%);
+        #8f7200 0%,
+        #d9c056 18%,
+        #ffe48a 45%,
+        #d9c056 82%,
+        #8f7200 100%);
       background-size: 200% 100%;
       -webkit-background-clip: text;
       background-clip: text;
       animation-name: glowSweep;
       animation-duration: var(--glow-dur, 2s);
-      animation-timing-function: ease-in-out; /* ease-out then ease-in */
-      animation-fill-mode: forwards;
+      animation-timing-function: ease-in-out; /* smooth ease-out then ease-in */
+    }
+
+    .content .glow-fade{
+      background: none !important;
+      -webkit-background-clip: initial;
+      background-clip: initial;
+      color: var(--text) !important;
+      text-shadow: 0 0 6px rgba(245,196,0,.12);
+      transition: color .35s ease, text-shadow .35s ease;
     }
     @keyframes glowSweep{
       from { background-position:   0% 0; }
