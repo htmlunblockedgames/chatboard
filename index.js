@@ -7,6 +7,39 @@ const PAGE_HREF     = "https://htmlunblockedgames.github.io/chatboard/";
 const MAX_FILE_MB   = 7;
 const MAX_CHARS     = 2000;
 
+// WebSocket endpoint derived from the Worker URL
+const WS_ENDPOINT = WORKER_URL.replace(/^http/i, 'ws').replace(/\/$/, '') + '/ws?room=' + encodeURIComponent(PAGE_URL_PATH);
+let ws = null, wsPing = null, wsBackoff = 500;
+function connectWS(){
+  try{
+    ws = new WebSocket(WS_ENDPOINT);
+    ws.onopen = () => {
+      wsBackoff = 500;
+      if (connEl){ connEl.textContent = "Live: Connected"; connEl.classList.add("ok"); connEl.classList.remove("bad"); }
+      wsPing = setInterval(() => { try { ws.send("ping"); } catch {} }, 30000);
+    };
+    ws.onmessage = (e) => {
+      if (typeof e.data === 'string') {
+        if (e.data === 'pong') return;
+        try {
+          const msg = JSON.parse(e.data);
+          if (msg && msg.type === "refresh") loadLatest();
+        } catch {}
+      }
+    };
+    ws.onclose = ws.onerror = () => {
+      if (connEl){ connEl.textContent = "Live: Reconnecting…"; connEl.classList.remove("ok"); connEl.classList.add("bad"); }
+      clearInterval(wsPing);
+      setTimeout(connectWS, Math.min(wsBackoff, 8000));
+      wsBackoff = Math.min(wsBackoff * 2, 8000);
+    };
+  }catch{
+    if (connEl){ connEl.textContent = "Live: Reconnecting…"; connEl.classList.remove("ok"); connEl.classList.add("bad"); }
+    setTimeout(connectWS, Math.min(wsBackoff, 8000));
+    wsBackoff = Math.min(wsBackoff * 2, 8000);
+  }
+}
+
 const $=id=>document.getElementById(id);
 const messagesEl=$("messages"), loadMoreBtn=$("loadMore");
 const nickEl=$("nick"), textEl=$("text");
@@ -616,4 +649,5 @@ textEl.addEventListener("drop", async e=>{
   await refreshAdminStatus();
   await checkConnection();
   await loadLatest();
+  connectWS();
 })();
