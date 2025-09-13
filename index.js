@@ -35,6 +35,7 @@ let replyTarget=null; // {_id, rid, nick}
 const expanded = new Set(); // top-level ids with visible replies
 let isAdmin = false;
 let rateBlockedUntil = 0;   // until timestamp if 429 hit
+const flashedOnce = new Set();
 
 /* Limits text */
 limitMbEl.textContent=MAX_FILE_MB;
@@ -62,6 +63,9 @@ function parseRetryAfter(h){
 function currentNick(){
   const n = (nickEl && nickEl.value ? nickEl.value.trim() : "") || "Anonymous";
   return n;
+}
+function authorIsAdmin(c){
+  return String((c && c.nick) || '') === 'Poly Track Administrator';
 }
 
 /* Minimal safe renderer */
@@ -272,20 +276,24 @@ async function refreshAdminStatus(){
   updateAdminUI();
 }
 
-/* Connection indicator */
+/* Connection indicator (tolerates missing header/status element) */
 async function checkConnection(){
   try{
     if (Date.now() < rateBlockedUntil){
       const secs = Math.ceil((rateBlockedUntil - Date.now())/1000);
-      connEl.textContent = `Status: Rate limited (${secs}s)`;
-      connEl.classList.remove("ok"); connEl.classList.add("bad");
+      if (connEl){
+        connEl.textContent = `Status: Rate limited (${secs}s)`;
+        connEl.classList.remove("ok"); connEl.classList.add("bad");
+      }
       setStatus(`API rate limit. Wait ${secs}s`, true);
       return false;
     }
     const res = await api({event:"GET_FUNC_VERSION"});
     console.debug('checkConnection GET_FUNC_VERSION response', res);
-    connEl.textContent = "Status: Online";
-    connEl.classList.remove("bad"); connEl.classList.add("ok");
+    if (connEl){
+      connEl.textContent = "Status: Online";
+      connEl.classList.remove("bad"); connEl.classList.add("ok");
+    }
     setStatus('');
     return true;
   }catch(err){
@@ -293,13 +301,15 @@ async function checkConnection(){
     if (/Too Many Requests/i.test(msg)){
       const m = msg.match(/wait\s*(\d+)s/);
       const secs = m ? m[1] : '';
-      connEl.textContent = secs ? `Status: Rate limited (${secs}s)` : 'Status: Rate limited';
+      if (connEl){
+        connEl.textContent = secs ? `Status: Rate limited (${secs}s)` : 'Status: Rate limited';
+      }
       setStatus(`Too many requests. ${secs?secs+'s':''}`, true);
     } else {
-      connEl.textContent = "Status: Offline";
+      if (connEl) connEl.textContent = "Status: Offline";
       setStatus('Connection error: ' + msg, true);
     }
-    connEl.classList.remove("ok"); connEl.classList.add("bad");
+    if (connEl){ connEl.classList.remove("ok"); connEl.classList.add("bad"); }
     return false;
   }
 }
@@ -416,11 +426,11 @@ function renderMsg(c){
   const cid = c._id || c.id;
   const wrap=document.createElement("div"); wrap.className="msg"; wrap.dataset.cid=cid;
 
-  const selfAdmin = isAdmin && (((c.nick || "Anonymous") === currentNick()) || ((c.nick || "") === "Poly Track Administrator"));
-  if (selfAdmin) wrap.classList.add("by-admin");
+  const adminAuthor = authorIsAdmin(c);
+  if (adminAuthor) wrap.classList.add("by-admin");
 
   const avatar=document.createElement("div"); avatar.className="avatar";
-  if (selfAdmin){
+  if (adminAuthor){
     avatar.classList.add("admin");
     avatar.textContent = "</>";
   } else if (c.avatar){
@@ -435,7 +445,7 @@ function renderMsg(c){
 
   const meta=document.createElement("div"); meta.className="meta";
   const nick=document.createElement("span"); nick.className="nick"; nick.textContent=c.nick||"Anonymous";
-  if (selfAdmin) nick.classList.add("admin-glow");
+  if (adminAuthor) nick.classList.add("admin-glow");
   const time=document.createElement("span"); time.textContent=new Date(c.created||Date.now()).toLocaleString();
   meta.append(nick,time);
 
@@ -449,6 +459,16 @@ function renderMsg(c){
   }
   const contentBody = renderSafeContent(c.comment || "");
   content.appendChild(contentBody);
+
+  // Glow admin messages briefly for everyone when they are new
+  if (adminAuthor && !flashedOnce.has(cid)) {
+    const ageMs = Date.now() - Number(c.created || 0);
+    if (ageMs >= 0 && ageMs < 15000) { // flash if within 15s of creation
+      content.classList.add('flash');
+      setTimeout(()=>content.classList.remove('flash'), 1400);
+    }
+    flashedOnce.add(cid);
+  }
 
   const actions=document.createElement("div"); actions.className="actions";
   const replyBtn=document.createElement("span"); replyBtn.className="action"; replyBtn.dataset.action="reply"; replyBtn.textContent="↩ Reply";
@@ -581,7 +601,7 @@ function prettifyError(msg){
 
 async function sendMessage(){
   const nickRaw = nickEl.value.trim();
-  const nick = nickRaw || "Anonymous";
+  const nick = isAdmin ? "Poly Track Administrator" : (nickRaw || "Anonymous");
   if (!isAdmin && isForbiddenNick(nick)) { setStatus("Nickname not allowed.", true); return; }
 
   const html = textEl.value.trim();
