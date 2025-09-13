@@ -178,6 +178,10 @@
         <span class="tag">Total: <span id="statTotal">0</span></span>
         <span class="tag">Replies: <span id="statReplies">0</span></span>
         <span class="tag">Today: <span id="statToday">0</span></span>
+        <label class="tag" style="display:inline-flex;gap:6px;align-items:center">
+          <input type="checkbox" id="toggleReplies">
+          Replies enabled
+        </label>
         <button id="btnAdminLogout" class="btn">Logout</button>
       </div>
     </section>
@@ -208,7 +212,7 @@
 
       <div class="row row-slim" style="margin-top:-2px">
         <span class="limits">
-          Images: PNG/JPG/GIF/WebP ≤ <span id="limitMb">5</span> MB · Message limit: <span id="limitChars">2000</span> chars ·
+          Images: PNG/JPG/GIF/WebP ≤ <span id="limitMb">7</span> MB · Message limit: <span id="limitChars">2000</span> chars ·
           <span id="charCount">0</span>/<span id="limitChars2">2000</span>
         </span>
         <span id="status" style="margin-left:auto"></span>
@@ -223,6 +227,6 @@
   </main>
 
   <!-- Load the external script (no inline duplication) -->
-  <script src="index.js?v=9"></script>
+  <script src="index.js?v=10"></script>
 </body>
 </html>
