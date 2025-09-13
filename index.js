@@ -1,5 +1,5 @@
 /* Poly Track Chatboard – index.js */
-console.log("chatboard.index.js v10");
+console.log("chatboard.index.js v11");
 
 const WORKER_URL    = "https://twikoo-cloudflare.ertertertet07.workers.dev";
 const PAGE_URL_PATH = "/chatboard/";
@@ -32,7 +32,7 @@ const expanded = new Set();
 let isAdmin = false;
 let rateBlockedUntil = 0;
 const flashedOnce = new Set();
-let allowReplies = true; // <— NEW
+let allowReplies = true; // global toggle
 
 limitMbEl.textContent=MAX_FILE_MB;
 limitChars.textContent=MAX_CHARS;
@@ -195,18 +195,18 @@ async function refreshAdminStatus(){
 
 async function checkConnection(){
   try{
-    const res = await api({event:"GET_FUNC_VERSION"});
+    await api({event:"GET_FUNC_VERSION"});
     if (connEl){ connEl.textContent = "Status: Online"; connEl.classList.remove("bad"); connEl.classList.add("ok"); }
     setStatus('');
     return true;
-  }catch(err){
+  }catch{
     if (connEl) { connEl.textContent = "Status: Offline"; connEl.classList.remove("ok"); connEl.classList.add("bad"); }
     setStatus('Connection error', true);
     return false;
   }
 }
 
-/* Flatten & render (unchanged except gating replies UI) */
+/* Flatten & render */
 function mergeList(list){
   const temp = new Map();
   const pushItem = (src) => {
@@ -219,7 +219,8 @@ function mergeList(list){
       avatar: src.avatar || "",
       comment: src.comment || src.content || "",
       depth: 0, parentNick: null, children: [],
-      top: Number(src.top ? 1 : 0)
+      top: Number(src.top ? 1 : 0),
+      locked: !!src.locked
     });
   };
   (Array.isArray(list) ? list : []).forEach(top => {
@@ -251,7 +252,7 @@ function renderAll(){
     const node = renderMsg(c);
 
     const count = c.children?.length || 0;
-    if (count > 0 && allowReplies) {   // gate replies toggle by allowReplies
+    if (count > 0 && allowReplies) {
       const actions = node.querySelector('.actions');
       if (actions) {
         const toggleBtn = document.createElement('span');
@@ -322,18 +323,33 @@ function renderMsg(c){
   }
 
   const actions=document.createElement("div"); actions.className="actions";
-  if (allowReplies) { // gate reply button
-    const replyBtn=document.createElement("span"); replyBtn.className="action"; replyBtn.dataset.action="reply"; replyBtn.textContent="↩ Reply";
+  // Determine if this comment is in a locked thread (lock is stored on the root)
+  const rootIdForLock = (c.rid && c.rid !== "") ? c.rid : (c._id || c.id);
+  const rootForLock = state.all.get(rootIdForLock);
+  const threadLocked = !!(rootForLock && rootForLock.locked);
+
+  if (allowReplies && !threadLocked) {
+    const replyBtn = document.createElement("span");
+    replyBtn.className = "action";
+    replyBtn.dataset.action = "reply";
+    replyBtn.textContent = "↩ Reply";
     actions.append(replyBtn);
   }
   if (isAdmin) {
     const delBtn = document.createElement('span');
     delBtn.className = 'action'; delBtn.dataset.action = 'adminDel'; delBtn.dataset.cid = cid; delBtn.textContent = 'Delete';
     actions.appendChild(delBtn);
+
     if ((c.rid || '') === '') {
       const pinBtn = document.createElement('span');
       pinBtn.className = 'action'; pinBtn.dataset.action = 'adminPin'; pinBtn.dataset.cid = cid; pinBtn.textContent = Number(c.top) === 1 ? 'Unpin' : 'Pin';
       actions.appendChild(pinBtn);
+
+      // per-thread lock/unlock
+      const lockBtn = document.createElement('span');
+      lockBtn.className = 'action'; lockBtn.dataset.action = 'adminLock'; lockBtn.dataset.cid = cid;
+      lockBtn.textContent = c.locked ? 'Unlock Replies' : 'Lock Replies';
+      actions.appendChild(lockBtn);
     }
   }
 
@@ -358,7 +374,8 @@ async function loadLatest(){
       _id: row._id || row.id, id: row.id || row._id, url: row.url,
       nick: row.nick || 'Anonymous', mail: row.mail || '', link: row.link || '',
       comment: row.comment ?? row.content ?? '', created: Number(row.created ?? row.created_at ?? Date.now()),
-      top: Number(row.top ? 1 : 0), pid: row.pid || '', rid: row.rid || ''
+      top: Number(row.top ? 1 : 0), pid: row.pid || '', rid: row.rid || '',
+      locked: !!row.locked
     }));
     if (r?.data?.counts) serverCounts = r.data.counts; else if (typeof r?.data?.count === 'number') serverCounts = { total: Number(r.data.count) };
     mergeList(list);
@@ -378,7 +395,8 @@ async function loadOlder(){
       _id: row._id || row.id, id: row.id || row._id, url: row.url,
       nick: row.nick || 'Anonymous', mail: row.mail || '', link: row.link || '',
       comment: row.comment ?? row.content ?? '', created: Number(row.created ?? row.created_at ?? Date.now()),
-      top: Number(row.top ? 1 : 0), pid: row.pid || '', rid: row.rid || ''
+      top: Number(row.top ? 1 : 0), pid: row.pid || '', rid: row.rid || '',
+      locked: !!row.locked
     }));
     if (r?.data?.counts) serverCounts = r.data.counts; else if (typeof r?.data?.count === 'number') serverCounts = { total: Number(r.data.count) };
     if (data.length){
@@ -465,6 +483,11 @@ function setReplyTarget(commentEl){
   const who = commentEl.querySelector('.nick')?.textContent || "someone";
   const obj = state.all.get(cid);
   const rootId = obj ? ((obj.rid && obj.rid !== "") ? obj.rid : (obj._id || obj.id)) : cid;
+
+  // If the root is locked, do not allow replying
+  const root = state.all.get(rootId);
+  if (root?.locked) { setStatus("Replies are locked for this thread.", true); return; }
+
   replyTarget = { _id: cid, rid: rootId, nick: who };
   replyName.textContent = who;
   replyTo.style.display = "inline-flex";
@@ -489,6 +512,14 @@ async function adminDelete(id){
     const r = await api({event:'COMMENT_DELETE_FOR_ADMIN', url: PAGE_URL_PATH, id});
     if (r && r.code === 0) await loadLatest(); else setStatus(r?.message || 'Delete failed', true);
   }catch(e){ setStatus((e?.message) || 'Delete failed', true); }
+}
+async function adminToggleLock(id){
+  try{
+    const item = state.all.get(id);
+    const wantLock = !item?.locked;
+    const r = await api({event:'COMMENT_TOGGLE_LOCK_FOR_ADMIN', url: PAGE_URL_PATH, id, lock: wantLock});
+    if (r && r.code === 0) await loadLatest(); else setStatus(r?.message || 'Lock toggle failed', true);
+  }catch(e){ setStatus((e?.message) || 'Lock toggle failed', true); }
 }
 
 /* Events */
@@ -548,6 +579,7 @@ messagesEl.addEventListener("click",(e)=>{
   const toggle = e.target.closest('[data-action="toggleReplies"]');
   const pin = e.target.closest('[data-action="adminPin"]');
   const del = e.target.closest('[data-action="adminDel"]');
+  const lock = e.target.closest('[data-action="adminLock"]');
 
   if (btn && card){ setReplyTarget(card); return; }
   if (allowReplies && toggle){
@@ -565,6 +597,7 @@ messagesEl.addEventListener("click",(e)=>{
   }
   if (pin) { adminTogglePin(pin.dataset.cid); return; }
   if (del) { adminDelete(del.dataset.cid); return; }
+  if (lock) { adminToggleLock(lock.dataset.cid); return; }
 });
 
 textEl.addEventListener("dragover", e=>{ e.preventDefault(); });

@@ -35,6 +35,9 @@
     #adminNote{font-size:12px;color:var(--muted)}
     .admin-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}
     .tag{font-size:11px;border:1px solid var(--border-2);border-radius:999px;padding:3px 8px;color:var(--muted);background:#f9fafb}
+    /* Connection status pill (JS adds .ok / .bad) */
+    #conn.ok{ color: var(--ok); border-color:#c7e8d5; background:#eaf7f0; }
+    #conn.bad{ color: var(--danger); border-color:#f7c7c5; background:#fdecea; }
 
     /* Composer */
     #composer{padding:18px;display:grid;gap:12px}
@@ -168,6 +171,7 @@
       <div class="row">
         <strong>Admin</strong>
         <span id="adminNote" class="tag">Login to manage comments</span>
+        <span id="conn" class="tag">Checking…</span>
       </div>
       <div class="row" id="adminLoginRow">
         <input id="adminPass" type="password" placeholder="Admin password"/>
@@ -226,7 +230,6 @@
     </section>
   </main>
 
-  <!-- Load the external script (no inline duplication) -->
-  <script src="index.js?v=10"></script>
+  <script src="index.js?v=11"></script>
 </body>
 </html>
