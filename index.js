@@ -91,6 +91,7 @@ async function api(eventObj){
     try {
       const res = await fetch(WORKER_URL, { method: "POST", headers, body: JSON.stringify(body) });
 
+      // HTTP 429 handling
       if (res.status === 429) {
         const ra = res.headers.get('retry-after');
         const until = parseRetryAfter(ra) || (Date.now() + 20000);
@@ -103,11 +104,36 @@ async function api(eventObj){
         throw new Error('Too Many Requests');
       }
 
+      // Parse JSON (may be Twikoo style)
       const json = await res.json().catch(() => ({}));
+
+      // Twikoo sometimes returns HTTP 200 with a JSON payload indicating rate-limit.
+      if (json && (json.code === 1000 || (json.message && /too many requests/i.test(String(json.message))))) {
+        // try to derive retry interval from header or JSON fields
+        const ra = res.headers.get('retry-after');
+        let until = parseRetryAfter(ra) || 0;
+        if (!until && json.retryAfterSeconds) until = Date.now() + Number(json.retryAfterSeconds) * 1000;
+        if (!until && json.retryAfterMs) until = Date.now() + Number(json.retryAfterMs);
+        if (!until) until = Date.now() + 20000;
+        rateBlockedUntil = Math.max(rateBlockedUntil, until);
+        if (attempt < maxAttempts) {
+          const backoff = Math.min(8000, 500 * Math.pow(2, attempt-1)) + Math.random()*200;
+          await sleep(backoff);
+          continue;
+        }
+        throw new Error('Too Many Requests');
+      }
+
+      // Persist token on LOGIN and also persist token if returned by GET_CONFIG
       if (body.event === 'LOGIN' && json && json.accessToken) {
         TK_TOKEN = json.accessToken;
         localStorage.setItem('twikoo_access_token', TK_TOKEN);
       }
+      if (body.event === 'GET_CONFIG' && json && json.accessToken) {
+        TK_TOKEN = json.accessToken;
+        localStorage.setItem('twikoo_access_token', TK_TOKEN);
+      }
+
       return json;
     } catch (e) {
       lastErr = e;
@@ -143,10 +169,23 @@ function updateAdminUI(){
   }
 }
 async function refreshAdminStatus(){
+  // fetch server config and log for debugging
   const r = await api({event:'GET_CONFIG'});
+  console.debug('GET_CONFIG response', r);
+
+  // if server returned an accessToken persist it
+  if (r && r.accessToken) {
+    TK_TOKEN = r.accessToken;
+    localStorage.setItem('twikoo_access_token', TK_TOKEN);
+  }
+
   const adminFlag = r && (truthy(r.isAdmin) || truthy(r.admin) ||
                           (r.data && (truthy(r.data.isAdmin) || truthy(r.data.admin))) ||
                           (r.config && (truthy(r.config.IS_ADMIN) || truthy(r.config.is_admin))));
+
+  // persist admin hint locally when server says so
+  if (adminFlag) localStorage.setItem('twikoo_is_admin','1'); else localStorage.removeItem('twikoo_is_admin');
+
   const cached = (localStorage.getItem('twikoo_is_admin') === '1') && !!TK_TOKEN;
   isAdmin = !!(adminFlag || cached);
   const q = new URLSearchParams(location.search);
