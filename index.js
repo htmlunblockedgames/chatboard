@@ -586,106 +586,109 @@ async function adminDelete(id){
 async function adminToggleLock(id){
   try{
     const item = state.all.get(id);
-    const wantLock = !item?.locked;
-    const r = await api({event:'COMMENT_TOGGLE_LOCK_FOR_ADMIN', url: PAGE_URL_PATH, id, lock: wantLock});
-    if (r && r.code === 0) await loadLatest(); else setStatus(r?.message || 'Lock toggle failed', true);
+    if (!item) return;
+    const want = !item.locked;
+    const r = await api({ event:'COMMENT_TOGGLE_LOCK_FOR_ADMIN', url: PAGE_URL_PATH, id, lock: want });
+    if (r && r.code === 0) { await loadLatest(); }
+    else { setStatus(r?.message || 'Lock toggle failed', true); }
   }catch(e){ setStatus((e?.message) || 'Lock toggle failed', true); }
 }
 
-/* Events */
-btnSend.addEventListener("click", sendMessage);
-btnAttach.addEventListener("click", attachImage);
-loadMoreBtn.addEventListener("click", loadOlder);
-replyCancel.addEventListener("click", clearReplyTarget);
-
-if (btnAdminLogin) btnAdminLogin.addEventListener('click', async ()=>{
-  const pw = adminPass.value.trim(); if (!pw) { setStatus('Enter password', true); return; }
-  const r = await api({event:'LOGIN', password: pw});
-  if (r && r.code === 0) {
-    isAdmin = true; localStorage.setItem('twikoo_is_admin','1');
-    if (adminPanel && SHOW_ADMIN_PANEL) adminPanel.style.display = 'grid';
-    await refreshAdminStatus();
-    await loadLatest();
-  } else {
-    setStatus(prettifyError(r?.message || 'Login failed'), true);
-  }
-});
-
-if (btnAdminLogout) btnAdminLogout.addEventListener('click', ()=>{
-  isAdmin = false;
+/* Auth */
+async function adminLogin(){
+  const pass = (adminPass.value || "").trim();
+  if (!pass) { setStatus("Enter admin password.", true); return; }
+  setStatus("Signing in…");
+  try{
+    const r = await api({event:'LOGIN', password: pass});
+    if (r && r.accessToken){
+      TK_TOKEN = r.accessToken; localStorage.setItem('twikoo_access_token', TK_TOKEN);
+      isAdmin = true; localStorage.setItem('twikoo_is_admin','1');
+      adminPass.value = "";
+      await refreshAdminStatus();
+      await loadLatest();
+      setStatus("Signed in.");
+    }else{
+      throw new Error(prettifyError(r?.message || "Login failed"));
+    }
+  }catch(e){ setStatus(e.message || "Login failed", true); }
+}
+function adminLogout(){
   TK_TOKEN = null;
   localStorage.removeItem('twikoo_access_token');
   localStorage.removeItem('twikoo_is_admin');
+  isAdmin = false;
   updateAdminUI();
-  setStatus('Logged out.');
-});
+  setStatus("Signed out.");
+}
 
-if (toggleRepliesEl) toggleRepliesEl.addEventListener('change', async (e)=>{
-  if (!isAdmin) { e.preventDefault(); updateAdminUI(); return; }
+/* Global toggles */
+async function onToggleRepliesChanged(){
+  if (!isAdmin) return;
+  const want = !!toggleRepliesEl.checked;
   try{
-    const want = !!e.target.checked;
-    const r = await api({event:'SET_CONFIG_FOR_ADMIN', set:{ allowReplies: want }});
-    if (r?.code===0){
-      allowReplies = String(r.config?.ALLOW_REPLIES ?? 'true').toLowerCase() !== 'false';
-      updateAdminUI(); await loadLatest();
-    }else{ throw new Error(r?.message || 'Failed to update'); }
-  }catch(err){ setStatus(prettifyError(err.message), true); updateAdminUI(); }
-});
-
-if (togglePostsEl) togglePostsEl.addEventListener('change', async (e)=>{
-  if (!isAdmin) { e.preventDefault(); updateAdminUI(); return; }
+    const r = await api({ event:'SET_CONFIG_FOR_ADMIN', set:{ allowReplies: want } });
+    if (r && r.code === 0){
+      allowReplies = String(r.config?.ALLOW_REPLIES).toLowerCase() !== 'false';
+      updateAdminUI(); renderAll();
+    }else{ setStatus(r?.message || "Failed to update replies setting", true); }
+  }catch(e){ setStatus(e.message || "Failed to update replies setting", true); }
+}
+async function onTogglePostsChanged(){
+  if (!isAdmin) return;
+  const onlyAdminCanPost = !!togglePostsEl.checked;
   try{
-    const onlyAdmin = !!e.target.checked; // checked means only admin can post
-    const r = await api({event:'SET_CONFIG_FOR_ADMIN', set:{ allowPosts: !onlyAdmin }});
-    if (r?.code===0){
-      allowPosts = String(r.config?.ALLOW_POSTS ?? 'true').toLowerCase() !== 'false';
+    const r = await api({ event:'SET_CONFIG_FOR_ADMIN', set:{ allowPosts: !onlyAdminCanPost } });
+    if (r && r.code === 0){
+      allowPosts = String(r.config?.ALLOW_POSTS).toLowerCase() !== 'false';
       updateAdminUI();
-    }else{ throw new Error(r?.message || 'Failed to update'); }
-  }catch(err){ setStatus(prettifyError(err.message), true); updateAdminUI(); }
-});
+    }else{ setStatus(r?.message || "Failed to update posting setting", true); }
+  }catch(e){ setStatus(e.message || "Failed to update posting setting", true); }
+}
 
-document.addEventListener('click', (ev)=>{
-  const t = ev.target;
-  // reply
-  if (t && t.classList.contains('action') && t.dataset.action === 'reply') {
-    const root = t.closest('.msg'); if (root) setReplyTarget(root);
-  }
-  // open/close replies list
-  if (t && t.classList.contains('action') && t.dataset.action === 'toggleReplies') {
-    const pid = t.dataset.parent; if (!pid) return;
-    if (expanded.has(pid)) expanded.delete(pid); else expanded.add(pid);
+/* Events */
+messagesEl.addEventListener('click', (e)=>{
+  const t = e.target;
+  if (!t || !t.classList.contains('action')) return;
+  const msg = t.closest('.msg');
+  const cid = msg?.dataset?.cid;
+  const act = t.dataset.action;
+  if (act === 'reply') { setReplyTarget(msg); return; }
+  if (act === 'adminDel' && cid){ adminDelete(cid); return; }
+  if (act === 'adminPin' && cid){ adminTogglePin(cid); return; }
+  if (act === 'adminLock' && cid){ adminToggleLock(cid); return; }
+  if (act === 'toggleReplies'){
+    const parent = t.dataset.parent;
+    if (!parent) return;
+    if (expanded.has(parent)) expanded.delete(parent); else expanded.add(parent);
     renderAll();
   }
-  // admin: pin
-  if (t && t.classList.contains('action') && t.dataset.action === 'adminPin') {
-    if (!isAdmin) return;
-    const id = t.dataset.cid; if (id) adminTogglePin(id);
-  }
-  // admin: delete
-  if (t && t.classList.contains('action') && t.dataset.action === 'adminDel') {
-    if (!isAdmin) return;
-    const id = t.dataset.cid; if (id) adminDelete(id);
-  }
-  // admin: lock
-  if (t && t.classList.contains('action') && t.dataset.action === 'adminLock') {
-    if (!isAdmin) return;
-    const id = t.dataset.cid; if (id) adminToggleLock(id);
-  }
 });
 
-textEl.addEventListener('input', ()=>{
-  charCount.textContent = String(textEl.value.length);
-});
-
+btnSend.addEventListener('click', sendMessage);
+btnAttach.addEventListener('click', attachImage);
+replyCancel.addEventListener('click', (e)=>{ e.preventDefault(); clearReplyTarget(); });
 fileEl.addEventListener('change', ()=>{
   const f = fileEl.files && fileEl.files[0];
   fileInfo.textContent = f ? `${f.name} (${Math.round(f.size/1024)} KB)` : '';
 });
+textEl.addEventListener('input', ()=>{
+  // show current raw length; clamp soft limit visually
+  const v = textEl.value;
+  charCount.textContent = String(v.length);
+  if (v.length > MAX_CHARS) charCount.style.color = "var(--danger)"; else charCount.style.color = "var(--muted)";
+});
 
-/* Init */
+btnAdminLogin?.addEventListener('click', adminLogin);
+btnAdminLogout?.addEventListener('click', adminLogout);
+toggleRepliesEl?.addEventListener('change', onToggleRepliesChanged);
+togglePostsEl?.addEventListener('change', onTogglePostsChanged);
+loadMoreBtn.addEventListener('click', loadOlder);
+
+/* Boot */
 (async function init(){
   await checkConnection();
   await refreshAdminStatus();
-  connectWS();
   await loadLatest();
+  connectWS();
 })();
