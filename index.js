@@ -1,5 +1,5 @@
 /* Poly Track Chatboard – index.js */
-console.log("chatboard.index.js v17");
+console.log("chatboard.index.js v18");
 
 const WORKER_URL    = "https://twikoo-cloudflare.ertertertet07.workers.dev";
 const PAGE_URL_PATH = "/chatboard/";
@@ -424,8 +424,8 @@ function applyTextGlowOnce(el){
   const pxPerSec = 250; // constant speed for long messages
   const durSec = Math.max(2, w / pxPerSec);
 
-  // portion of the total duration reserved for a smooth fade back to normal text
-  const fadeSec = Math.max(0.2, Math.min(0.6, durSec * 0.2)); // 20% of total, clamped
+  // Target a ~2s fade-out; clamp to total duration to avoid negative delay
+  const fadeSec = Math.min(2, durSec);
   const fadeDelay = Math.max(0, durSec - fadeSec);
 
   el.dataset.glowRunning = '1';
@@ -480,7 +480,8 @@ function applyTextGlowRemainder(el, c){
   const remain = Math.max(0, totalDur - elapsed);
   if (remain <= 0.05) return;
 
-  const fadeSec = Math.max(0.2, Math.min(0.6, remain * 0.2));
+  // Target a ~2s fade-out for the remaining time; clamp to remainder
+  const fadeSec = Math.min(2, remain);
   const fadeDelay = Math.max(0, remain - fadeSec);
 
   el.dataset.glowRunning = '1';
