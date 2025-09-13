@@ -1,5 +1,5 @@
 /* Poly Track Chatboard – index.js */
-console.log("chatboard.index.js v14");
+console.log("chatboard.index.js v15");
 
 const WORKER_URL    = "https://twikoo-cloudflare.ertertertet07.workers.dev";
 const PAGE_URL_PATH = "/chatboard/";
@@ -61,7 +61,7 @@ const SHOW_ADMIN_PANEL =
 if (adminPanel) adminPanel.style.display = SHOW_ADMIN_PANEL ? "grid" : "none";
 
 let TK_TOKEN = localStorage.getItem('twikoo_access_token') || null;
-const state = { all:new Map(), tops:[] };
+const state = { all:new Map(), tops:[], rootOrder:[] };
 let serverCounts = null;
 let loading=false;
 let earliestMainCreated=null;
@@ -259,14 +259,15 @@ async function checkConnection(){
   }
 }
 
-/* Flatten & render */
+/* Flatten & render (preserve server root order) */
 function mergeList(list){
   const temp = new Map();
   const pushItem = (src) => {
     const id = src._id || src.id; if (!id) return;
     temp.set(id, {
       ...src,
-      _id: id, pid: src.pid || "", rid: src.rid || "",
+      _id: id, id,
+      pid: src.pid || "", rid: src.rid || "",
       created: src.created || Date.now(),
       nick: src.nick || "Anonymous",
       avatar: src.avatar || "",
@@ -276,10 +277,9 @@ function mergeList(list){
       locked: !!src.locked
     });
   };
-  (Array.isArray(list) ? list : []).forEach(top => {
-    pushItem(top);
-    if (Array.isArray(top.replies)) top.replies.forEach(r => pushItem(r));
-  });
+  (Array.isArray(list) ? list : []).forEach(pushItem);
+
+  // derive depth/parent + children
   for (const obj of temp.values()){
     if ((obj.rid || "") === "") { obj.depth = 0; obj.parentNick = null; continue; }
     let depth = 1, p = temp.get(obj.pid), seen=new Set([obj._id]);
@@ -292,9 +292,23 @@ function mergeList(list){
     if ((o.rid || "") !== "") { const root=temp.get(o.rid); if (root) root.children.push(o); }
   }
   for (const root of temp.values()){ if (root.children?.length) root.children.sort((a,b)=>(a.created||0)-(b.created||0)); }
+
   state.all = temp;
-  state.tops = Array.from(temp.values()).filter(x => (x.rid || "") === "");
-  state.tops.sort((a,b)=> (Number(b.top||0) - Number(a.top||0)) || (b.created||0)-(a.created||0));
+
+  // Preserve server-provided root order
+  const rootsInOrder = [];
+  const seen = new Set();
+  for (const item of (Array.isArray(list)?list:[])) {
+    const id = item._id || item.id;
+    const obj = temp.get(id);
+    if (obj && (obj.rid || "") === "" && !seen.has(id)) { rootsInOrder.push(obj); seen.add(id); }
+  }
+  // Fallback: if none found, build by default rules
+  if (!rootsInOrder.length) {
+    for (const v of temp.values()) if ((v.rid || "") === "") rootsInOrder.push(v);
+  }
+  state.tops = rootsInOrder;
+  state.rootOrder = rootsInOrder.map(x => x._id);
   earliestMainCreated = state.tops.length ? Math.min(...state.tops.map(x=>x.created||Date.now())) : null;
 }
 
@@ -339,6 +353,22 @@ function renderAll(){
   updateAdminUI();
 }
 
+function applyTextGlowOnce(el){
+  if (!el) return;
+  // Measure width to compute duration: min 2s for short, linear speed otherwise
+  const w = el.scrollWidth || el.getBoundingClientRect().width || 0;
+  const pxPerSec = 250; // constant speed for long messages
+  const durSec = Math.max(2, w / pxPerSec);
+  el.classList.add('glow-text');
+  el.style.setProperty('--glow-dur', durSec + 's');
+  const done = () => {
+    el.classList.remove('glow-text');
+    el.style.removeProperty('--glow-dur');
+    el.removeEventListener('animationend', done);
+  };
+  el.addEventListener('animationend', done);
+}
+
 function renderMsg(c){
   const cid = c._id || c.id;
   const wrap=document.createElement("div"); wrap.className="msg"; wrap.dataset.cid=cid;
@@ -349,6 +379,12 @@ function renderMsg(c){
   if (adminAuthor){ avatar.classList.add("admin"); avatar.textContent = "</>"; }
   else if (c.avatar){ const img=new Image(); img.src=c.avatar; img.alt=c.nick||"avatar"; avatar.appendChild(img); }
   else { avatar.textContent = initialOf(c.nick); }
+
+  // Slightly vary avatar glow duration
+  if (adminAuthor) {
+    const base = 3.2, jitter = (cid.charCodeAt(0)%10)/20; // 0..0.45s
+    avatar.style.setProperty('--glow-avatar-dur', (base + jitter).toFixed(2) + 's');
+  }
 
   const bubble=document.createElement("div"); bubble.className="bubble";
   const depth = Number(c.depth || 0); bubble.style.marginLeft = (depth * 20) + 'px';
@@ -367,11 +403,14 @@ function renderMsg(c){
     content.appendChild(replyToSpan);
   }
   const body = renderSafeContent(c.comment || "");
+  body.classList.add('glow-target');
   content.appendChild(body);
 
+  // Apply glow to ALL messages once when rendered
+  applyTextGlowOnce(body);
+
   if (adminAuthor && !flashedOnce.has(cid)) {
-    const ageMs = Date.now() - Number(c.created || 0);
-    if (ageMs >= 0 && ageMs < 15000) { content.classList.add('flash'); setTimeout(()=>content.classList.remove('flash'), 1400); }
+    // relying on text sweep only
     flashedOnce.add(cid);
   }
 
@@ -403,6 +442,15 @@ function renderMsg(c){
       lockBtn.className = 'action'; lockBtn.dataset.action = 'adminLock'; lockBtn.dataset.cid = cid;
       lockBtn.textContent = c.locked ? 'Unlock Replies' : 'Lock Replies';
       actions.appendChild(lockBtn);
+
+      // Reorder pins – only show for pinned root
+      if (Number(c.top) === 1) {
+        const upBtn = document.createElement('span');
+        upBtn.className = 'action'; upBtn.dataset.action='pinUp'; upBtn.dataset.cid=cid; upBtn.textContent='Move Up';
+        const downBtn = document.createElement('span');
+        downBtn.className = 'action'; downBtn.dataset.action='pinDown'; downBtn.dataset.cid=cid; downBtn.textContent='Move Down';
+        actions.append(upBtn, downBtn);
+      }
     }
   }
 
@@ -594,6 +642,28 @@ async function adminToggleLock(id){
   }catch(e){ setStatus((e?.message) || 'Lock toggle failed', true); }
 }
 
+/* Reorder pins (Up/Down) */
+async function adminReorderPin(id, dir){
+  // Build current pinned order from state.tops
+  const pinned = state.tops.filter(x => Number(x.top) === 1).map(x => x._id);
+  const idx = pinned.indexOf(id);
+  if (idx < 0) return;
+
+  if (dir === 'up' && idx > 0) {
+    [pinned[idx-1], pinned[idx]] = [pinned[idx], pinned[idx-1]];
+  } else if (dir === 'down' && idx < pinned.length - 1) {
+    [pinned[idx+1], pinned[idx]] = [pinned[idx], pinned[idx+1]];
+  } else {
+    return;
+  }
+
+  try{
+    const r = await api({ event:'COMMENT_REORDER_PINS_FOR_ADMIN', url: PAGE_URL_PATH, order: pinned });
+    if (r && r.code === 0) { await loadLatest(); }
+    else { setStatus(r?.message || 'Reorder failed', true); }
+  }catch(e){ setStatus(e?.message || 'Reorder failed', true); }
+}
+
 /* Auth */
 async function adminLogin(){
   const pass = (adminPass.value || "").trim();
@@ -662,7 +732,10 @@ messagesEl.addEventListener('click', (e)=>{
     if (!parent) return;
     if (expanded.has(parent)) expanded.delete(parent); else expanded.add(parent);
     renderAll();
+    return;
   }
+  if (act === 'pinUp' && cid){ adminReorderPin(cid,'up'); return; }
+  if (act === 'pinDown' && cid){ adminReorderPin(cid,'down'); return; }
 });
 
 btnSend.addEventListener('click', sendMessage);
@@ -673,7 +746,6 @@ fileEl.addEventListener('change', ()=>{
   fileInfo.textContent = f ? `${f.name} (${Math.round(f.size/1024)} KB)` : '';
 });
 textEl.addEventListener('input', ()=>{
-  // show current raw length; clamp soft limit visually
   const v = textEl.value;
   charCount.textContent = String(v.length);
   if (v.length > MAX_CHARS) charCount.style.color = "var(--danger)"; else charCount.style.color = "var(--muted)";
