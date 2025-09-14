@@ -9,38 +9,35 @@
 
 console.log("chatboard.index.js v38");
 
-/* ---- Embedding guard: allow top-level, or Google Sites at /view/poly-track (any subpage) ---- */
+/* ---- Embedding guard: allow sites.google.com when embedded; otherwise don't client-block (server enforces) ---- */
 (function(){
   try{
     if (window.top !== window.self) {
       let allowed = false;
       const ref = document.referrer || '';
 
-      // 1) Prefer document.referrer (most browsers)
+      // Prefer referrer with path (often present on Google Sites)
       try{
         const u = new URL(ref);
         if (u.hostname === 'sites.google.com') {
-          const p = u.pathname.replace(/\/+$/,'');
-          if (p.startsWith('/view/poly-track')) allowed = true;
+          // If you want a soft client path check, you could do:
+          // const p = u.pathname.replace(/\/+$/,'');
+          // allowed = p.startsWith('/view/poly-track');
+          // But referrer may be stripped; don't hard-block on the client.
+          allowed = true;
         }
       }catch{}
 
-      // 2) Fallback when referrer is empty (Chrome-only)
+      // Fallback: ancestorOrigins is origin-only (no path), still OK to allow sites.google.com
       if (!allowed && document.location && document.location.ancestorOrigins && document.location.ancestorOrigins.length){
-        const ao = document.location.ancestorOrigins[0];
         try{
-          const a = new URL(ao);
-          if (a.hostname === 'sites.google.com') {
-            const p = a.pathname.replace(/\/+$/,'');
-            if (p.startsWith('/view/poly-track')) allowed = true;
-          }
+          const a = new URL(document.location.ancestorOrigins[0]);
+          if (a.hostname === 'sites.google.com') allowed = true;
         }catch{}
       }
 
-      if (!allowed) {
-        document.body.innerHTML = '<div style="padding:16px;font-family:Inter,system-ui,sans-serif;color:#555">Embedding not allowed.</div>';
-        return;
-      }
+      // If we still can't positively identify, do NOT block here.
+      // Let the Worker (server) enforce via CORS/allowlist.
     }
   }catch{}
 })();
