@@ -226,7 +226,7 @@
       background-clip:text;
       -webkit-text-fill-color: transparent;
       background-position:-60% 0;
-      animation: glowSweep 2s ease-in-out forwards;
+      animation: glowSweep var(--glow-dur, 2s) ease-in-out forwards;
       opacity: var(--glow-ol-opacity, 1);
       transition: opacity 1.5s ease-in-out; /* smooth fade after sweep */
       will-change: background-position, opacity;

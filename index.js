@@ -471,6 +471,22 @@ function createGlowOverlayOn(targetEl){
   return ov;
 }
 
+// Compute per-element sweep duration so small text finishes ~2s, long text scales with a constant px/s speed
+function computeGlowSeconds(targetEl){
+  try{
+    const rect = targetEl.getBoundingClientRect();
+    const cs = getComputedStyle(targetEl);
+    // Fallback line-height if 'normal'
+    const lh = parseFloat(cs.lineHeight) || (parseFloat(cs.fontSize) * 1.4) || 18;
+    const w = Math.max(1, rect.width);
+    // Sweep travels from -60% to 160% => ~220% of element width
+    const travelPx = 2.2 * w;
+    const PX_PER_SEC = 220; // standard sweep speed
+    const dur = Math.max(2, travelPx / PX_PER_SEC);
+    return dur;
+  }catch{ return 2; }
+}
+
 function maybeAnimateMessage(c, bodyEl){
   // Only admin messages glow, for all users
   if (!authorIsAdmin(c)) return;
@@ -502,15 +518,19 @@ function maybeAnimateMessage(c, bodyEl){
     list.forEach((tgt) => {
       const ov = createGlowOverlayOn(tgt);
       if (!ov) return;
-      // Restart sweep reliably
+      const dur = computeGlowSeconds(tgt);
+      ov.style.setProperty('--glow-dur', dur + 's');
+      // Restart sweep reliably and use per-element duration with ease-in-out
       ov.style.animation = 'none';
-      void ov.offsetWidth; // reflow to reset keyframes
-      ov.style.animation = 'glowSweep 2s ease-in-out forwards';
+      void ov.offsetWidth; // reflow
+      ov.style.animation = `glowSweep ${dur}s ease-in-out forwards`;
       // After sweep, fade the overlay to reveal base text (no flash)
-      setTimeout(() => { requestAnimationFrame(() => { ov.style.opacity = '0'; }); }, 2000);
+      setTimeout(() => {
+        requestAnimationFrame(() => { ov.style.opacity = '0'; });
+      }, Math.round(dur * 1000));
       const cleanup = () => { if (ov && ov.parentNode) ov.parentNode.removeChild(ov); };
       ov.addEventListener('transitionend', cleanup, { once: true });
-      setTimeout(cleanup, 3600);
+      setTimeout(cleanup, Math.round(dur * 1000 + 1600));
     });
 
     if (forced) mustAnimate.delete(String(c.id));
