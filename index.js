@@ -1,5 +1,5 @@
 /* Poly Track Chatboard – index.js */
-console.log("chatboard.index.js v24");
+console.log("chatboard.index.js v25");
 
 const WORKER_URL    = "https://twikoo-cloudflare.ertertertet07.workers.dev";
 const PAGE_URL_PATH = "/chatboard/";
@@ -66,7 +66,7 @@ function connectWS(){
 const $=id=>document.getElementById(id);
 const messagesEl=$("messages"), loadMoreBtn=$("loadMore");
 const nickEl=$("nick"), textEl=$("text");
-const fileEl=$("file"), btnAttach=$("btnAttach"), btnAttachVideo=$("btnAttachVideo"), btnSend=$("btnSend");
+const fileEl=$("file"), btnAttach=$("btnAttach"), btnEmbed=$("btnEmbed"), btnSend=$("btnSend");
 const fileInfo=$("fileInfo"), statusEl=$("status"), connEl=$("conn");
 
 const adminPanel=$("adminPanel"), adminPass=$("adminPass"), btnAdminLogin=$("btnAdminLogin"),
@@ -159,7 +159,7 @@ function authorIsAdmin(c){ return String((c && c.nick) || '') === 'Poly Track Ad
 
 /* Render-safe content:
    - Everyone: images
-   - Links & video embeds: admin only */
+   - Links & embeds: admin only (includes general iframes and srcdoc) */
 function renderSafeContent(input, opts = {}){
   const allowLinks = !!opts.allowLinks;
   const allowEmbeds = !!opts.allowEmbeds;
@@ -170,7 +170,6 @@ function renderSafeContent(input, opts = {}){
   const pushText = s => frag.appendChild(document.createTextNode(s || ''));
   const isHttp = (u)=> /^https?:\/\//i.test(u||'');
   const isDirectVideo = (u)=> /\.(mp4|webm|ogg)(\?.*)?$/i.test(u||'');
-  const allowIframeSrc = (u)=> /^https:\/\/www\.youtube\.com\/embed\//.test(u||'') || /^https:\/\/player\.vimeo\.com\/video\//.test(u||'');
 
   Array.from(tpl.content.childNodes).forEach(node => {
     if (node.nodeType === Node.TEXT_NODE) return pushText(node.textContent);
@@ -201,14 +200,23 @@ function renderSafeContent(input, opts = {}){
       }
 
       if (allowEmbeds && tag === 'iframe') {
+        // Allow admin to embed either a remote site (src) or raw HTML (srcdoc)
+        const hasSrcdoc = node.hasAttribute('srcdoc');
         const src = node.getAttribute('src') || '';
-        if (allowIframeSrc(src)) {
+        if (hasSrcdoc || isHttp(src)) {
           const f = document.createElement('iframe');
-          f.src = src; f.loading = 'lazy';
-          f.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture';
-          f.referrerPolicy = 'no-referrer'; f.title = node.getAttribute('title') || 'Embedded video';
-          f.width = node.getAttribute('width') || '560'; f.height = node.getAttribute('height') || '315';
-          f.setAttribute('allowfullscreen','');
+          if (hasSrcdoc) {
+            f.setAttribute('srcdoc', node.getAttribute('srcdoc') || '');
+          } else {
+            f.src = src;
+          }
+          f.loading = 'lazy';
+          f.referrerPolicy = 'no-referrer';
+          f.title = node.getAttribute('title') || 'Embedded content';
+          f.width = node.getAttribute('width') || '560';
+          f.height = node.getAttribute('height') || '315';
+          // Sandbox for safety; allows most sites to function while isolating them
+          f.setAttribute('sandbox', 'allow-scripts allow-same-origin');
           return frag.appendChild(f);
         }
         return pushText('[blocked iframe]');
@@ -358,8 +366,8 @@ function updateAdminUI(){
     optAutoPinEl.style.display = show ? 'inline-flex' : 'none';
     if (sendAutoPinEl) sendAutoPinEl.disabled = !show;
   }
-  if (btnAttachVideo) {
-    btnAttachVideo.style.display = isAdmin ? 'inline-flex' : 'none';
+  if (btnEmbed) {
+    btnEmbed.style.display = isAdmin ? 'inline-flex' : 'none';
   }
 
   if (!allowReplies) {
@@ -853,30 +861,36 @@ async function attachImage(){
   }
 }
 
-/* Video attach (admin only) */
-async function attachVideo(){
-  if (!isAdmin) { setStatus('Only admin can attach videos', true); return; }
-  const url = (prompt('Enter video URL (YouTube/Vimeo or direct .mp4/.webm/.ogg):') || '').trim();
-  if (!url) return;
-  try{
-    let html = '';
-    const yt = /^(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/watch\?v=|youtu\.be\/)([A-Za-z0-9_-]{11})/i.exec(url);
-    const vm = /^(?:https?:\/\/)?(?:www\.)?vimeo\.com\/(\d+)/i.exec(url);
-    if (yt) {
-      const id = yt[1];
-      html = `\n<iframe src="https://www.youtube.com/embed/${id}" width="560" height="315" title="YouTube video" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen loading="lazy"></iframe>\n`;
-    } else if (vm) {
-      const id = vm[1];
-      html = `\n<iframe src="https://player.vimeo.com/video/${id}" width="560" height="315" title="Vimeo video" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen loading="lazy"></iframe>\n`;
-    } else if (/^https?:\/\/.+\.(mp4|webm|ogg)(\?.*)?$/i.test(url)) {
-      html = `\n<video controls preload="metadata" src="${url}"></video>\n`;
-    } else {
-      setStatus('Unsupported video URL', true);
-      return;
-    }
+/* General-purpose embed (admin only) */
+async function attachEmbed(){
+  if (!isAdmin) { setStatus('Only admin can embed content', true); return; }
+  const mode = (prompt('Embed mode:\n- Type "url" to embed a website by URL\n- Type "html" to embed raw HTML (sandboxed)') || '').trim().toLowerCase();
+  if (!mode) return;
+
+  if (mode === 'url') {
+    const url = (prompt('Enter website URL (https://...)') || '').trim();
+    if (!/^https?:\/\//i.test(url)) { setStatus('Please enter a valid http(s) URL', true); return; }
+    const html = `\n<iframe src="${url}" width="560" height="315" title="Embedded site" sandbox="allow-scripts allow-same-origin" loading="lazy" referrerpolicy="no-referrer"></iframe>\n`;
     insertAtCursor(textEl, html);
-    setStatus('Video attached!');
-  }catch(e){ setStatus(e?.message || 'Attach video failed', true); }
+    setStatus('Embed added!');
+    return;
+  }
+
+  if (mode === 'html') {
+    const raw = prompt('Paste raw HTML to embed (will be sandboxed; scripts allowed inside the frame):') || '';
+    if (!raw.trim()) return;
+    const esc = raw
+      .replace(/&/g,'&amp;')
+      .replace(/</g,'&lt;')
+      .replace(/>/g,'&gt;')
+      .replace(/"/g,'&quot;');
+    const html = `\n<iframe srcdoc="${esc}" width="560" height="315" title="Embedded HTML" sandbox="allow-scripts allow-same-origin" loading="lazy" referrerpolicy="no-referrer"></iframe>\n`;
+    insertAtCursor(textEl, html);
+    setStatus('Embed added!');
+    return;
+  }
+
+  setStatus('Type "url" or "html".', true);
 }
 
 /* Events */
@@ -891,7 +905,7 @@ fileEl.addEventListener('change', ()=>{
   fileInfo.textContent = f ? `${f.name} (${(f.size/1024/1024).toFixed(2)} MB)` : '';
 });
 btnAttach.addEventListener('click', attachImage);
-if (btnAttachVideo) btnAttachVideo.addEventListener('click', attachVideo);
+if (btnEmbed) btnEmbed.addEventListener('click', attachEmbed);
 
 replyCancel.addEventListener('click', ()=>{
   replyTarget=null;
