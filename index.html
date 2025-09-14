@@ -227,6 +227,11 @@
       line-height: inherit;
     }
 
+    @keyframes glowSweep {
+      0%   { background-position: -60% 0; }
+      100% { background-position: 160% 0; }
+    }
+
     /* ===== Compact message layout (fits more per page) ===== */
     /* Moved --inner and --radius overrides into the main :root block above for proper CSS variable usage */
     #messages{ padding:10px var(--inner); gap:8px; }

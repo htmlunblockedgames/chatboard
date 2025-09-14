@@ -426,27 +426,41 @@ function createGlowOverlayOn(targetEl){
   targetEl.appendChild(ov); ov.style.setProperty('--glow-ol-opacity', '1'); return ov;
 }
 
-/* Start a sweep + fade-out; won’t re-trigger if already animated */
 function maybeAnimateMessage(c, bodyEl){
   const isPinnedAdmin = c.top && authorIsAdmin(c);
   const isRecentAdmin = authorIsAdmin(c) && (Date.now() - Number(c.created || 0) <= 5000);
+
   if (isPinnedAdmin) {
     if (sessionAnimatedPinned.has(c.id)) return; // already this reload
     sessionAnimatedPinned.add(c.id);
   } else if (!isRecentAdmin || animatedOnce.has(c.id)) {
-    return;
+    return; // not eligible to animate
   } else {
     animatedOnce.add(c.id);
   }
-  // apply overlay to each text span inside body
-  const targets = bodyEl.querySelectorAll('.glow-target');
-  const list = targets.length ? [...targets] : [bodyEl];
-  list.forEach((tgt)=>{
-    const ov = createGlowOverlayOn(tgt);
-    if (!ov) return;
-    // 2s sweep (driven by global --shimmer-x), then 1.5s fade-out
-    setTimeout(()=> { ov.style.opacity = '0'; }, 2000);
-    ov.addEventListener('transitionend', ()=>{ ov.remove(); }, { once:true });
+
+  // Ensure the element is in the DOM before creating overlays
+  requestAnimationFrame(() => {
+    const targets = bodyEl.querySelectorAll('.glow-target');
+    const list = targets.length ? [...targets] : [bodyEl];
+
+    list.forEach((tgt) => {
+      const ov = createGlowOverlayOn(tgt);
+      if (!ov) return;
+
+      // Restart the sweep animation reliably
+      ov.style.animation = 'none';
+      void ov.offsetWidth; // force reflow to re-trigger animation
+      ov.style.animation = 'glowSweep 2s ease-in-out'; // left->right sweep over 2s
+
+      // After the sweep, fade out over 1.5s to reveal base text (no white flash)
+      setTimeout(() => { ov.style.opacity = '0'; }, 2000);
+
+      const cleanup = () => { if (ov && ov.parentNode) ov.parentNode.removeChild(ov); };
+      ov.addEventListener('transitionend', cleanup, { once: true });
+      // Fallback cleanup in case transitionend doesn't fire
+      setTimeout(cleanup, 3600);
+    });
   });
 }
 
