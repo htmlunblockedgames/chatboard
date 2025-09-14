@@ -14,6 +14,7 @@
       --ok:#0f9d58; --danger:#d93025;
       --radius:16px; --inner:18px;
       --shadow:0 8px 18px rgba(0,0,0,.05);
+      --shimmer-x: 0%;
     }
     *{box-sizing:border-box}
     html,body{height:100%}
@@ -174,7 +175,7 @@
       background-size: 200% 100%;
       -webkit-background-clip: text;
       background-clip: text;
-      animation: adminNameShimmer 3.2s linear infinite;
+      background-position: var(--shimmer-x, 0%) 0;
       text-shadow: 0 0 3px rgba(245,196,0,.12), 0 0 6px rgba(245,196,0,.06);
     }
     @keyframes adminNameShimmer{
@@ -194,20 +195,13 @@
       background-size: 200% 100%;
       -webkit-background-clip: text;
       background-clip: text;
-      color: var(--text);
-      -webkit-text-fill-color: transparent;
-      animation-name: glowSweep;
-      animation-duration: var(--glow-dur, 2s);
-      animation-timing-function: cubic-bezier(.2,.8,.2,1);
+      color: inherit; -webkit-text-fill-color: transparent;
+      background-position: var(--shimmer-x, 0%) 0;
     }
     .content .glow-fade{
-      transition:
-        color var(--fade-dur, 2s) ease-in-out,
-        -webkit-text-fill-color var(--fade-dur, 2s) ease-in-out,
-        text-shadow var(--fade-dur, 2s) ease-in-out;
+      transition: -webkit-text-fill-color 1.5s ease-in-out, color 1.5s ease-in-out;
       -webkit-text-fill-color: var(--text);
       color: var(--text);
-      text-shadow: none;
     }
     @keyframes glowSweep{
       from { background-position:   0% 0; }

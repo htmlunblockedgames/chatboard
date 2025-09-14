@@ -7,6 +7,22 @@ const PAGE_HREF     = "https://htmlunblockedgames.github.io/chatboard/";
 const MAX_FILE_MB   = 7;
 const MAX_CHARS     = 2000;
 
+/* Global shimmer driver – keeps phase stable across re-renders */
+(function startGlobalShimmer(){
+  const durMs = 3200; // 3.2s loop to match previous feel
+  let start = performance.now();
+  const easeInOut = (t) => 0.5 - 0.5 * Math.cos(Math.PI * 2 * t); // smooth in/out cycle
+  function tick(){
+    const now = performance.now();
+    const raw = ((now - start) % durMs) / durMs; // 0..1
+    const eased = easeInOut(raw);
+    const pos = Math.round(eased * 200); // 0%..200%
+    document.documentElement.style.setProperty('--shimmer-x', pos + '%');
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+})();
+
 /* Live updates via WebSocket */
 const WS_ENDPOINT = WORKER_URL.replace(/^http/i, 'ws').replace(/\/$/, '') + '/ws?room=' + encodeURIComponent(PAGE_URL_PATH);
 let ws = null, wsPing = null, wsBackoff = 500;
@@ -438,86 +454,39 @@ function renderAll(){
 /* ===== Glow animation helpers (admin only) ===== */
 function applyTextGlowOnce(el){
   if (!el || el.dataset.glowRunning === '1') return;
-  requestAnimationFrame(() => {
+  el.classList.remove('glow-fade');
+  el.classList.add('glow-text');
+  el.dataset.glowRunning = '1';
+  const fadeTimer = setTimeout(() => {
+    el.classList.add('glow-fade'); // cross-fade to black over 1.5s via CSS
+  }, 2000); // 2s shimmer
+  const cleanupTimer = setTimeout(() => {
     el.classList.remove('glow-text','glow-fade');
-    el.style.removeProperty('--glow-dur');
-    el.style.removeProperty('--fade-dur');
-    el.style.display = 'inline';
-
-    const rect = el.getBoundingClientRect();
-    const w = Math.max(1, el.scrollWidth || rect.width || 0);
-    const pxPerSec = 250;
-    const durSec = Math.max(2, w / pxPerSec);
-    const fadeSec = Math.min(2, durSec);
-    const fadeDelay = Math.max(0, durSec - fadeSec);
-
-    void el.offsetWidth;
-    el.dataset.glowRunning = '1';
-    el.classList.add('glow-text');
-    el.style.setProperty('--glow-dur', durSec + 's');
-    el.style.setProperty('--fade-dur', fadeSec + 's');
-
-    let faded = false;
-    const startFade = () => { if (!faded){ faded = true; el.classList.add('glow-fade'); } };
-    const fadeTimer = setTimeout(startFade, Math.round(fadeDelay * 1000));
-
-    const cleanup = () => {
-      clearTimeout(fadeTimer);
-      el.classList.remove('glow-text','glow-fade');
-      el.style.removeProperty('--glow-dur');
-      el.style.removeProperty('--fade-dur');
-      el.style.removeProperty('display');
-      delete el.dataset.glowRunning;
-    };
-
-    el.addEventListener('animationend', startFade, { once:true });
-    el.addEventListener('transitionend', cleanup, { once:true });
-  });
+    delete el.dataset.glowRunning;
+  }, 2000 + 1500); // after fade completes
+  el.dataset.fadeTimer = String(fadeTimer);
+  el.dataset.cleanupTimer = String(cleanupTimer);
 }
 
 function applyTextGlowRemainder(el, c){
-  if (!el || !c || el.dataset.glowRunning === '1') return;
-  requestAnimationFrame(() => {
+  if (!el || el.dataset.glowRunning === '1') return;
+  const created = Number(c?.created || Date.now());
+  const elapsed = Math.max(0, (Date.now() - created) / 1000); // seconds
+  let remain = Math.max(0, 2 - elapsed); // shimmer remainder up to 2s total
+  el.classList.remove('glow-fade');
+  el.classList.add('glow-text');
+  el.dataset.glowRunning = '1';
+  const startFade = () => el.classList.add('glow-fade');
+  if (remain <= 0){
+    startFade();
+    remain = 0;
+  } else {
+    setTimeout(startFade, Math.round(remain * 1000));
+  }
+  setTimeout(() => {
     el.classList.remove('glow-text','glow-fade');
-    el.style.removeProperty('--glow-dur');
-    el.style.removeProperty('--fade-dur');
-    el.style.display = 'inline';
-
-    const rect = el.getBoundingClientRect();
-    const w = Math.max(1, el.scrollWidth || rect.width || 0);
-    const pxPerSec = 250;
-    const totalDur = Math.max(2, w / pxPerSec);
-
-    const created = Number(c.created || 0);
-    const elapsed = Math.max(0, (Date.now() - created) / 1000);
-    const remain = Math.max(0, totalDur - elapsed);
-    if (remain <= 0.05) { el.style.removeProperty('display'); return; }
-
-    const fadeSec = Math.min(2, remain);
-    const fadeDelay = Math.max(0, remain - fadeSec);
-
-    void el.offsetWidth;
-    el.dataset.glowRunning = '1';
-    el.classList.add('glow-text');
-    el.style.setProperty('--glow-dur', remain + 's');
-    el.style.setProperty('--fade-dur', fadeSec + 's');
-
-    let faded = false;
-    const startFade = () => { if (!faded){ faded = true; el.classList.add('glow-fade'); } };
-    const fadeTimer = setTimeout(startFade, Math.round(fadeDelay * 1000));
-
-    const cleanup = () => {
-      clearTimeout(fadeTimer);
-      el.classList.remove('glow-text','glow-fade');
-      el.style.removeProperty('--glow-dur');
-      el.style.removeProperty('--fade-dur');
-      el.style.removeProperty('display');
-      delete el.dataset.glowRunning;
-    };
-
-    el.addEventListener('animationend', startFade, { once:true });
-    el.addEventListener('transitionend', cleanup, { once:true });
-  });
+    delete el.dataset.glowRunning;
+  }, Math.round(remain * 1000) + 1500);
 }
 
 /* Only admins glow */
