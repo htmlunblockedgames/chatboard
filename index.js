@@ -1,5 +1,5 @@
-/* Poly Track Chatboard – index.js (v29) */
-console.log("chatboard.index.js v29");
+/* Poly Track Chatboard – index.js (v30) */
+console.log("chatboard.index.js v30");
 
 const WORKER_URL    = "https://twikoo-cloudflare.ertertertet07.workers.dev";
 const PAGE_URL_PATH = "/chatboard/";
@@ -349,8 +349,6 @@ function bindAdminTogglesOnce(){
 }
 
 /* ===== Content rendering helpers ===== */
-
-/* Render-safe content with text grouped into .glow-target spans */
 function renderSafeContent(input, opts = {}){
   const allowLinks = !!opts.allowLinks;
   const allowEmbeds = !!opts.allowEmbeds;
@@ -549,7 +547,7 @@ function buildActionsFor(c){
       pinBtn.textContent = Number(c.top) === 1 ? "Unpin" : "Pin";
       actions.appendChild(pinBtn);
 
-      // NEW: reorder controls when pinned
+      // Reorder when pinned
       if (Number(c.top) === 1) {
         const upBtn = document.createElement("span");
         upBtn.className = "action";
@@ -599,14 +597,13 @@ function currentPinnedOrder(){
 function movePinned(id, dir){
   const order = currentPinnedOrder();
   const i = order.indexOf(id);
-  if (i < 0) return;
   const j = i + (dir < 0 ? -1 : 1);
-  if (j < 0 || j >= order.length) return;
+  if (i < 0 || j < 0 || j >= order.length) return;
   const tmp = order[i]; order[i] = order[j]; order[j] = tmp;
   return sendPinOrder(order);
 }
 
-/* ===== Rendering (minimal implementation) ===== */
+/* ===== Rendering ===== */
 function renderMsg(c){
   const cid = c._id || c.id;
   const el = document.createElement('div');
@@ -636,14 +633,12 @@ function renderMsg(c){
   contentWrap.appendChild(body);
   bubble.appendChild(contentWrap);
 
-  // Admin shimmer overlay timing
   if (authorIsAdmin(c)) {
     if ((Date.now() - (c.created||0)) <= 5000) {
       applyOverlayGlowRemainder(body, c);
     }
   }
 
-  // Replies
   const repliesBox = document.createElement('div'); repliesBox.className='replies'; repliesBox.id = `replies-${cid}`;
   if (c.children && c.children.length && expanded.has(cid)) {
     c.children.forEach(ch => repliesBox.appendChild(renderMsg(ch)));
@@ -662,10 +657,8 @@ function renderMsg(c){
 function renderAllIncremental(){
   if (!messagesEl) return;
   messagesEl.innerHTML = '';
-  // roots first (tops array produced by merge)
   const roots = [];
   for (const v of state.all.values()) if ((v.rid||'')==='') roots.push(v);
-  // Keep pinned first (server already orders), then others by created desc
   const pinned = roots.filter(r=>Number(r.top)===1);
   const others = roots.filter(r=>Number(r.top)!==1).sort((a,b)=>(b.created||0)-(a.created||0));
   for (const r of [...pinned, ...others]) {
@@ -690,7 +683,6 @@ function mergeList(list){
       children: []
     });
   });
-  // link replies under roots
   for (const o of temp.values()){
     if ((o.rid||'')!=='') {
       const root = temp.get(o.rid);
@@ -721,8 +713,21 @@ async function loadLatest(force=false){
   }
 }
 
+/* ===== Textarea helpers ===== */
+function insertAtCursor(el, text){
+  if (!el) return;
+  const start = el.selectionStart ?? el.value.length;
+  const end = el.selectionEnd ?? el.value.length;
+  const before = el.value.slice(0, start);
+  const after = el.value.slice(end);
+  el.value = before + text + after;
+  const pos = start + text.length;
+  el.selectionStart = el.selectionEnd = pos;
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
 /* ===== Send / attach / embed ===== */
-function countImgsInHTML(html){ return (String(html||'').match(/<img\\b[^>]*>/gi) || []).length; }
+function countImgsInHTML(html){ return (String(html||'').match(/<img\b[^>]*>/gi) || []).length; }
 function updateAttachAvailability(){
   if (!btnAttach) return;
   if (isAdmin){ btnAttach.disabled = false; return; }
@@ -730,23 +735,48 @@ function updateAttachAvailability(){
   btnAttach.disabled = n >= 1;
 }
 
+/* NEW: react when a file is chosen */
+if (fileEl){
+  // Fallback in case the label's for= doesn't trigger click in some browsers
+  const btnChoose = $("btnChoose");
+  if (btnChoose && !btnChoose.dataset.bound){
+    btnChoose.dataset.bound = '1';
+    btnChoose.addEventListener('click', (e)=>{ if (fileEl) fileEl.click(); });
+  }
+
+  fileEl.addEventListener('change', ()=>{
+    const f = fileEl.files && fileEl.files[0];
+    if (!f){
+      if (fileInfo) fileInfo.textContent = "";
+      return;
+    }
+    const mb = (f.size/(1024*1024)).toFixed(2);
+    if (fileInfo) fileInfo.textContent = `${f.name} — ${mb} MB`;
+    if (!/^image\//i.test(f.type)){
+      setStatus('Not an image', true);
+      return;
+    }
+    if (f.size > MAX_FILE_MB*1024*1024){
+      setStatus(`Image too large (>${MAX_FILE_MB}MB)`, true);
+      return;
+    }
+    setStatus('Ready to attach');
+  });
+}
+
 async function doSend(){
   const nick = (nickEl?.value || '').trim().slice(0,10) || 'Anonymous';
   let content = (textEl?.value || '').trim();
   if (!content) return setStatus('Nothing to send', true);
 
-  // Non-admin: only one image per message
   if (!isAdmin && countImgsInHTML(content) > 1) {
     return setStatus('Only one image allowed per message', true);
   }
 
   const payload = { event:'COMMENT_CREATE', url: PAGE_URL_PATH, nick, content };
-  // replying?
-  if (replyTarget && replyTarget.rid && replyTarget.pid) {
+  if (replyTarget && replyTarget.rid) {
     payload.pid = replyTarget.pid;
     payload.rid = replyTarget.rid;
-  } else if (isAdmin && sendNoReplyEl && sendNoReplyEl.checked) {
-    // “No replies” means immediately lock the thread after post -> handled by toggling after create if wanted (optional)
   }
 
   setStatus('Sending…');
@@ -755,11 +785,8 @@ async function doSend(){
     textEl.value = '';
     updateAttachAvailability();
     setStatus('Sent');
-    // auto pin if admin checked
     if (isAdmin && sendAutoPinEl && sendAutoPinEl.checked && res?.data?.id) {
-      try {
-        await api({ event:'COMMENT_SET_FOR_ADMIN', id: res.data.id, url: PAGE_URL_PATH, set:{ top: true } });
-      } catch {}
+      try { await api({ event:'COMMENT_SET_FOR_ADMIN', id: res.data.id, url: PAGE_URL_PATH, set:{ top: true } }); } catch {}
     }
   } else {
     setStatus(res?.message || 'Send failed', true);
@@ -768,8 +795,8 @@ async function doSend(){
 
 async function doAttach(){
   const f = fileEl?.files?.[0];
-  if (!f) return;
-  if (!/^image\\//i.test(f.type)) return setStatus('Not an image', true);
+  if (!f) { setStatus('No file selected', true); return; }
+  if (!/^image\//i.test(f.type)) return setStatus('Not an image', true);
   const sizeMb = f.size / (1024*1024);
   if (sizeMb > MAX_FILE_MB) return setStatus(`Image too large (>${MAX_FILE_MB}MB)`, true);
 
@@ -778,18 +805,51 @@ async function doAttach(){
   const r = await api({ event:'UPLOAD_IMAGE', photo: String(dataURL) });
   if (r?.code === 0 && r?.data?.url) {
     const tag = `<img src="${r.data.url}">`;
-    const cur = textEl.value || '';
-    // Non-admin: block second image
-    if (!isAdmin && countImgsInHTML(cur) >= 1) {
-      setStatus('Only one image allowed', true);
-      return;
-    }
-    textEl.value = (cur ? cur + (/\n$/.test(cur)?'':'\n') : '') + tag;
+    insertAtCursor(textEl, (textEl.value ? '\n' : '') + tag);
+    // clear selection so picking same file again still triggers change
+    fileEl.value = '';
+    if (fileInfo) fileInfo.textContent = '';
     updateAttachAvailability();
     setStatus('Image attached');
   } else {
     setStatus(r?.message || 'Upload failed', true);
   }
+}
+
+/* NEW: inline embed UI */
+function setEmbedModeUI(){
+  if (!embedModeEl) return;
+  const m = embedModeEl.value;
+  if (embedUrlEl)  embedUrlEl.style.display  = (m === 'url')  ? 'block' : 'none';
+  if (embedHtmlEl) embedHtmlEl.style.display = (m === 'html') ? 'block' : 'none';
+}
+if (embedModeEl && !embedModeEl.dataset.bound){
+  embedModeEl.dataset.bound = '1';
+  embedModeEl.addEventListener('change', setEmbedModeUI);
+  setEmbedModeUI();
+}
+if (btnEmbedInsert && !btnEmbedInsert.dataset.bound){
+  btnEmbedInsert.dataset.bound = '1';
+  btnEmbedInsert.addEventListener('click', ()=>{
+    if (!isAdmin) { setStatus('Embed is admin-only', true); return; }
+    const mode = embedModeEl ? embedModeEl.value : 'url';
+    let snippet = '';
+    if (mode === 'url') {
+      const u = (embedUrlEl?.value || '').trim();
+      if (!/^https?:\/\//i.test(u)) { setStatus('Enter a valid URL (http/https)', true); return; }
+      snippet =
+        `<iframe src="${u}" width="560" height="315" ` +
+        `sandbox="allow-scripts allow-same-origin" referrerpolicy="no-referrer" title="Embedded content"></iframe>`;
+    } else {
+      const raw = embedHtmlEl?.value || '';
+      const esc = raw.replace(/<\/(script)/gi, '&lt;/$1'); // basic guard
+      snippet =
+        `<iframe srcdoc="${esc.replace(/"/g,'&quot;')}" width="560" height="315" ` +
+        `sandbox="allow-scripts allow-same-origin" referrerpolicy="no-referrer" title="Embedded HTML"></iframe>`;
+    }
+    insertAtCursor(textEl, (textEl.value ? '\n' : '') + snippet + '\n');
+    setStatus('Embed inserted');
+  });
 }
 
 /* ===== Events ===== */
