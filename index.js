@@ -344,11 +344,28 @@ function applyOverlayGlowOnce(bodyEl){
   list.forEach((tgt)=>{ const ov = createGlowOverlayOn(tgt); if (!ov) return; setTimeout(()=> { ov.style.setProperty('--glow-ol-opacity', '0'); }, 2000); setTimeout(()=> { ov.remove(); }, 3500); });
 }
 function applyOverlayGlowRemainder(bodyEl, c){
-  const targets = bodyEl.querySelectorAll('.glow-target'); const list = targets.length ? [...targets] : [bodyEl];
-  const created = Number(c?.created || Date.now()); const elapsed = Math.max(0, (Date.now() - created) / 1000); let remain = Math.max(0, 2 - elapsed);
-  list.forEach((tgt)=>{ const ov = createGlowOverlayOn(tgt); if (!ov) return;
-    if (remain <= 0){ ov.style.setProperty('--glow-ol-opacity', '0'); setTimeout(()=> ov.remove(), 400); }
-    else { setTimeout(()=> { ov.style.setProperty('--glow-ol-opacity', '0'); }, Math.round(remain * 1000)); setTimeout(()=> { ov.remove(); }, Math.round(remain * 1000) + 1500); }
+  const targets = bodyEl.querySelectorAll('.glow-target');
+  const list = targets.length ? [...targets] : [bodyEl];
+
+  const created = Number(c?.created || Date.now());
+  const elapsed = Math.max(0, (Date.now() - created) / 1000);
+  const remain = Math.max(0, 2 - elapsed); // finish the 2s sweep if not done
+
+  list.forEach((tgt) => {
+    const ov = createGlowOverlayOn(tgt);
+    if (!ov) return;
+
+    if (remain <= 0) {
+      // Sweep window already passed—still do a smooth 1.5s fade-out
+      ov.style.setProperty('--glow-ol-opacity', '0');      // triggers CSS transition
+      setTimeout(() => { try{ ov.remove(); } catch {} }, 1600); // let fade finish (no abrupt stop)
+    } else {
+      // Finish the remaining sweep, then fade 1.5s
+      setTimeout(() => {
+        ov.style.setProperty('--glow-ol-opacity', '0');
+      }, Math.round(remain * 1000));
+      setTimeout(() => { try{ ov.remove(); } catch {} }, Math.round(remain * 1000) + 1500);
+    }
   });
 }
 
