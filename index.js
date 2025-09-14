@@ -475,7 +475,7 @@ function maybeAnimateMessage(c, bodyEl){
   // Only admins' message bodies glow
   if (!authorIsAdmin(c)) return;
 
-  const forced       = mustAnimate.has(c.id);
+  const forced       = mustAnimate.has(String(c.id));
   const isPinned     = !!c.top;
   const isNewToClient= !seenIds.has(String(c.id));
 
@@ -484,9 +484,9 @@ function maybeAnimateMessage(c, bodyEl){
     if (sessionAnimatedPinned.has(c.id) && !forced) return;
     sessionAnimatedPinned.add(c.id);
   } else {
-    // Non‑pinned: animate exactly once when first seen on this client, or when forced
-    if (animatedOnce.has(c.id)) return;
-    if (!(forced || isNewToClient)) return;
+    // Non‑pinned: animate for everyone if mustAnimate (WS or 5s fallback), otherwise only once per client
+    if (!forced && animatedOnce.has(c.id)) return;
+    if (!forced && !(isNewToClient)) return;
     animatedOnce.add(c.id);
   }
 
@@ -494,7 +494,7 @@ function maybeAnimateMessage(c, bodyEl){
   requestAnimationFrame(() => {
     const targets = bodyEl.querySelectorAll('.glow-target');
     const list = [...targets].filter(el => (el.textContent || '').trim().length);
-    if (!list.length) { if (forced) mustAnimate.delete(c.id); return; }
+    if (!list.length) { if (forced) mustAnimate.delete(String(c.id)); return; }
 
     list.forEach((tgt) => {
       const ov = createGlowOverlayOn(tgt);
@@ -510,7 +510,7 @@ function maybeAnimateMessage(c, bodyEl){
       setTimeout(cleanup, 3600);
     });
 
-    if (forced) mustAnimate.delete(c.id);
+    if (forced) mustAnimate.delete(String(c.id));
   });
 }
 
