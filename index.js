@@ -155,6 +155,8 @@ let allowPosts = true;
 const sessionAnimatedPinned = new Set();
 const animatedOnce = new Set();
 const mustAnimate = new Set();
+const seenIds = new Set();
+let firstLoadDone = false;
 
 /* ===== UI helpers ===== */
 if (limitMbEl) limitMbEl.textContent=MAX_FILE_MB;
@@ -464,18 +466,18 @@ function maybeAnimateMessage(c, bodyEl){
   // Only admins' message bodies glow
   if (!authorIsAdmin(c)) return;
 
-  const forced   = mustAnimate.has(c.id);
-  const isPinned = !!c.top;
-  const isRecent = (Date.now() - Number(c.created || 0) <= 5000);
+  const forced       = mustAnimate.has(c.id);
+  const isPinned     = !!c.top;
+  const isNewToClient= !seenIds.has(String(c.id));
 
   if (isPinned) {
-    // Pinned admin messages: once per session unless forced
+    // Pinned admin messages: animate once per session (or when forced)
     if (sessionAnimatedPinned.has(c.id) && !forced) return;
     sessionAnimatedPinned.add(c.id);
-  } else if (!(forced || isRecent) || animatedOnce.has(c.id)) {
-    // Non‑pinned admin messages: play once if recent (<=5s) or forced
-    return;
   } else {
+    // Non‑pinned: animate exactly once when first seen on this client, or when forced
+    if (animatedOnce.has(c.id)) return;
+    if (!(forced || isNewToClient)) return;
     animatedOnce.add(c.id);
   }
 
@@ -653,6 +655,9 @@ function renderOne(c){
 
   maybeAnimateMessage(c, body);
 
+  // Mark as seen on this client so subsequent refreshes don’t retrigger non‑pinned animations
+  seenIds.add(String(c.id));
+
   return { el: msg, repliesWrap };
 }
 
@@ -717,6 +722,14 @@ async function loadLatest(){
   if (loading) return; loading = true;
   try{
     const r = await api({ event:'GET', url: PAGE_URL_PATH, page:1, pageSize: 200 });
+    // Populate seenIds for non-pinned messages on first load so we don’t animate historical backfill
+    const incoming = Array.isArray(r?.data?.comments) ? r.data.comments : [];
+    if (!firstLoadDone) {
+      for (const it of incoming) {
+        if (!it.top) seenIds.add(String(it.id));
+      }
+      firstLoadDone = true;
+    }
     serverCounts = r?.data?.counts || null;
     buildThread(r?.data);
     renderAllIncremental();
