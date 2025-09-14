@@ -9,21 +9,37 @@
 
 console.log("chatboard.index.js v38");
 
-/* ---- Embedding guard: only allow top-level, or Google Sites at /view/poly-track ---- */
+/* ---- Embedding guard: allow top-level, or Google Sites at /view/poly-track (any subpage) ---- */
 (function(){
   try{
     if (window.top !== window.self) {
-      const ref = document.referrer || '';
       let allowed = false;
+      const ref = document.referrer || '';
+
+      // 1) Prefer document.referrer (most browsers)
       try{
         const u = new URL(ref);
-        const base = (u.origin + u.pathname).replace(/\/+$/,'');
-        const whitelist = ['https://sites.google.com/view/poly-track'];
-        allowed = whitelist.includes(base);
-      }catch{ allowed = false; }
+        if (u.hostname === 'sites.google.com') {
+          const p = u.pathname.replace(/\/+$/,'');
+          if (p.startsWith('/view/poly-track')) allowed = true;
+        }
+      }catch{}
+
+      // 2) Fallback when referrer is empty (Chrome-only)
+      if (!allowed && document.location && document.location.ancestorOrigins && document.location.ancestorOrigins.length){
+        const ao = document.location.ancestorOrigins[0];
+        try{
+          const a = new URL(ao);
+          if (a.hostname === 'sites.google.com') {
+            const p = a.pathname.replace(/\/+$/,'');
+            if (p.startsWith('/view/poly-track')) allowed = true;
+          }
+        }catch{}
+      }
+
       if (!allowed) {
         document.body.innerHTML = '<div style="padding:16px;font-family:Inter,system-ui,sans-serif;color:#555">Embedding not allowed.</div>';
-        throw new Error('embed-denied');
+        return;
       }
     }
   }catch{}
