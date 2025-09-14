@@ -259,6 +259,7 @@ function updateAdminUI(){
 
   if (optNoReplyEl){ const show = !!isAdmin && !replyTarget; optNoReplyEl.style.display = show ? 'inline-flex' : 'none'; if (sendNoReplyEl) sendNoReplyEl.disabled = !show || !allowReplies; }
   if (optAutoPinEl){ const show = !!isAdmin && !replyTarget; optAutoPinEl.style.display = show ? 'inline-flex' : 'none'; if (sendAutoPinEl) sendAutoPinEl.disabled = !show; }
+  if (embedBox) embedBox.style.display = isAdmin ? 'flex' : 'none'; // <— add this
 
   if (!allowReplies && !isAdmin) { replyTarget = null; if (replyTo) replyTo.style.display = 'none'; }
 
@@ -445,10 +446,10 @@ function buildThread(data){
     }
     if (c.pid){ state.parentOf.set(c.id, c.pid); }
   }
-  for (const [rid, list] of state.childrenByRoot) list.sort((a,b)=> a.created - b.created); // oldest -> newest within thread
+  for (const list of state.childrenByRoot.values()) list.sort((a,b)=> a.created - b.created); // oldest -> newest within thread
 }
 
-function renderOne(c, depth=0){
+function renderOne(c){
   const msg = document.createElement('div'); msg.className = 'msg'; msg.dataset.id = c.id;
   if (c.top) {
     const badge = document.createElement('span'); badge.className='pin-badge'; badge.textContent='PINNED';
@@ -560,10 +561,37 @@ const repliesWrap = document.createElement('div');
 repliesWrap.className = 'replies';
 if (expanded.has(c.id)) repliesWrap.style.display = 'flex';
 bubble.appendChild(repliesWrap);
-// animate admin text if needed
-  maybeAnimateMessage(c, body);
 
-  return { el: msg, repliesWrap };
+// Root-level show/hide replies toggle (per-session)
+if (!c.rid) {
+  const btnToggle = document.createElement('span');
+  btnToggle.className = 'action';
+  const rootId = c.id;
+  const computeCount = () => (state.childrenByRoot.get(rootId) || []).length;
+  const setLabel = () => {
+    const n = computeCount();
+    btnToggle.textContent = expanded.has(rootId)
+      ? 'Hide replies'
+      : (n ? `Show replies (${n})` : 'Show replies');
+  };
+  setLabel();
+  btnToggle.addEventListener('click', () => {
+    if (expanded.has(rootId)) {
+      expanded.delete(rootId);
+      repliesWrap.style.display = 'none';
+    } else {
+      expanded.add(rootId);
+      repliesWrap.style.display = 'flex';
+    }
+    setLabel();
+  });
+  actions.appendChild(btnToggle);
+}
+
+// animate admin text if needed
+maybeAnimateMessage(c, body);
+
+return { el: msg, repliesWrap };
 }
 
 async function reorderPin(id, delta){
@@ -580,7 +608,10 @@ async function reorderPin(id, delta){
   }catch(e){ setStatus(e?.message||'Failed to reorder pins', true); }
 }
 
-function clearMessages(){ while(messagesEl && messagesEl.firstChild) messagesEl.removeChild(messagesEl.firstChild); }
+function clearMessages(){
+  if (!messagesEl) return;
+  while (messagesEl.firstChild) messagesEl.removeChild(messagesEl.firstChild);
+}
 
 function renderAllIncremental(){
   if (!messagesEl) return;
@@ -605,7 +636,7 @@ function renderAllIncremental(){
 
     // render children (nested tree)
     const children = state.childrenByRoot.get(root.id) || [];
-    const byId = new Map(children.map(x=>[x.id,x]));
+    // const byId = new Map(children.map(x=>[x.id,x])); // unused
     const kidsOf = new Map(); children.forEach(ch => { const p = ch.pid || root.id; if (!kidsOf.has(p)) kidsOf.set(p, []); kidsOf.get(p).push(ch); });
     const renderSub = (parentId, container) => {
       const arr = kidsOf.get(parentId) || [];
@@ -632,7 +663,7 @@ function renderAllIncremental(){
 }
 
 /* ===== Loading ===== */
-async function loadLatest(invalidate=false){
+async function loadLatest(){
   if (loading) return; loading = true;
   try{
     const r = await api({ event:'GET', url: PAGE_URL_PATH, page:1, pageSize: 200 });
