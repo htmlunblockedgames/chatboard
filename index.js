@@ -6,7 +6,28 @@
    - Pinned admin messages animate only once per page load, unless a new pin appears.
    - Keeps previous features intact (pin reorder, two-tap confirms, live updates, etc).
 */
+
 console.log("chatboard.index.js v38");
+
+/* ---- Embedding guard: only allow top-level, or Google Sites at /view/poly-track ---- */
+(function(){
+  try{
+    if (window.top !== window.self) {
+      const ref = document.referrer || '';
+      let allowed = false;
+      try{
+        const u = new URL(ref);
+        const base = (u.origin + u.pathname).replace(/\/+$/,'');
+        const whitelist = ['https://sites.google.com/view/poly-track'];
+        allowed = whitelist.includes(base);
+      }catch{ allowed = false; }
+      if (!allowed) {
+        document.body.innerHTML = '<div style="padding:16px;font-family:Inter,system-ui,sans-serif;color:#555">Embedding not allowed.</div>';
+        throw new Error('embed-denied');
+      }
+    }
+  }catch{}
+})();
 
 /* ===== Constants ===== */
 const WORKER_URL    = "https://twikoo-cloudflare.ertertertet07.workers.dev";
