@@ -497,9 +497,18 @@ function renderOne(c){
   if (canReply){
     const btnReply = document.createElement('span'); btnReply.className='action'; btnReply.textContent='Reply';
     btnReply.addEventListener('click', ()=>{
+      // allow replying to replies (pid = this comment, rid = root)
       replyTarget = c;
       if (replyTo){ replyTo.style.display='flex'; replyName.textContent = c.nick || 'Anonymous'; }
-      // expand thread for all in session via server push (we rely on new child count auto-open)
+
+      // open the root thread immediately for this session
+      const rootId = c.rid || c.id;
+      expanded.add(rootId);
+      const rootMsg = messagesEl.querySelector(`.msg[data-id="${rootId}"]`);
+      if (rootMsg){
+        const wrap = rootMsg.querySelector(':scope > .bubble > .replies');
+        if (wrap) wrap.style.display = 'flex';
+      }
     });
     actions.appendChild(btnReply);
   }
@@ -564,28 +573,30 @@ bubble.appendChild(repliesWrap);
 
 // Root-level show/hide replies toggle (per-session)
 if (!c.rid) {
-  const btnToggle = document.createElement('span');
-  btnToggle.className = 'action';
   const rootId = c.id;
-  const computeCount = () => (state.childrenByRoot.get(rootId) || []).length;
-  const setLabel = () => {
-    const n = computeCount();
-    btnToggle.textContent = expanded.has(rootId)
-      ? 'Hide replies'
-      : (n ? `Show replies (${n})` : 'Show replies');
-  };
-  setLabel();
-  btnToggle.addEventListener('click', () => {
-    if (expanded.has(rootId)) {
-      expanded.delete(rootId);
-      repliesWrap.style.display = 'none';
-    } else {
-      expanded.add(rootId);
-      repliesWrap.style.display = 'flex';
-    }
+  const computeCount = () => (state.childrenByRoot.get(rootId) || []).length; // counts all replies under this root
+  const n = computeCount();
+  if (n > 0) {
+    const btnToggle = document.createElement('span');
+    btnToggle.className = 'action';
+    const setLabel = () => {
+      btnToggle.textContent = expanded.has(rootId)
+        ? 'Hide replies'
+        : `Show replies (${n})`;
+    };
     setLabel();
-  });
-  actions.appendChild(btnToggle);
+    btnToggle.addEventListener('click', () => {
+      if (expanded.has(rootId)) {
+        expanded.delete(rootId);
+        repliesWrap.style.display = 'none';
+      } else {
+        expanded.add(rootId);
+        repliesWrap.style.display = 'flex';
+      }
+      setLabel();
+    });
+    actions.appendChild(btnToggle);
+  }
 }
 
 // animate admin text if needed
