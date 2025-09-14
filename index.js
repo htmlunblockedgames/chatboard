@@ -576,8 +576,14 @@ if (!document.body.dataset.boundActions){
 
     if (act === 'adminDel'){
       if (!isAdmin) return;
-      if (!armConfirmButton(target, 'Are you sure?', 3000)) return; // second click confirms
-      const c = state.all.get(cid); const url = PAGE_URL_PATH;
+      const c = state.all.get(cid) || {};
+      const isRoot = (c.rid || '') === '';
+      const isPinnedRoot = isRoot && Number(c.top) === 1;
+      // Two-tap confirm ONLY for pinned root messages
+      if (isPinnedRoot){
+        if (!armConfirmButton(target, 'Are you sure?', 3000)) return; // second click confirms
+      }
+      const url = PAGE_URL_PATH;
       const r = await api({ event:'COMMENT_DELETE_FOR_ADMIN', id: c.id, url });
       if (r && r.code===0){ await loadLatest(true); }
       else { setStatus(r && r.message ? r.message : 'Delete failed', true); }
@@ -586,7 +592,14 @@ if (!document.body.dataset.boundActions){
 
     if (act === 'adminPin'){
       if (!isAdmin) return;
-      const c = state.all.get(cid); const wantTop = Number(c.top)===1 ? 0 : 1;
+      const c = state.all.get(cid) || {};
+      const isRoot = (c.rid || '') === '';
+      const isPinned = Number(c.top) === 1;
+      const wantTop = isPinned ? 0 : 1;
+      // Two-tap confirm ONLY when UNPINNING a pinned root
+      if (isRoot && isPinned && wantTop === 0){
+        if (!armConfirmButton(target, 'Are you sure?', 3000)) return;
+      }
       const r = await api({ event:'COMMENT_SET_FOR_ADMIN', id: c.id, url: PAGE_URL_PATH, set:{ top: !!wantTop } });
       if (r && r.code===0){ await loadLatest(true); }
       else { setStatus(r && r.message ? r.message : 'Pin toggle failed', true); }
@@ -610,8 +623,15 @@ if (!document.body.dataset.boundActions){
 
     if (act === 'lockToggle'){
       if (!isAdmin) return;
-      const c = state.all.get(cid) || {}; const rootId = (c.rid||'')===''? c.id : c.rid;
-      const locked = !!(state.all.get(rootId)?.locked);
+      const c = state.all.get(cid) || {};
+      const rootId = (c.rid || '') === '' ? c.id : c.rid;
+      const root = state.all.get(rootId) || {};
+      const locked = !!root.locked;
+      const isPinnedRoot = ((root.rid || '') === '') && Number(root.top) === 1;
+      // Two-tap confirm ONLY when UNLOCKING a pinned root
+      if (isPinnedRoot && locked){
+        if (!armConfirmButton(target, 'Are you sure?', 3000)) return;
+      }
       const resp = await api({ event:'COMMENT_TOGGLE_LOCK_FOR_ADMIN', id: rootId, url: PAGE_URL_PATH, lock: !locked });
       if (resp && resp.code===0){ await loadLatest(true); }
       else { setStatus(resp && resp.message ? resp.message : 'Lock toggle failed', true); }
