@@ -569,7 +569,7 @@ async function loadLatest(force=false){
       updateAdminUI(); // also re-renders
     } else {
       if (r && (r.code === 403 || String(r.message||"").toLowerCase().includes("forbidden origin"))) {
-        document.body.innerHTML = '<div style="padding:16px;font-family:Inter,system-ui,sans-serif;color:#555">Embedding not allowed.</div>';
+        document.body.innerHTML = '<div style="padding:16px;font-family:Inter,system-ui,sans-serif;color:#555">Embedding not allowed. <a href="https://sites.google.com/view/poly-track/" target="_top" rel="noopener">Open Poly Track</a>.</div>';
       } else {
         setStatus(r && r.message ? r.message : 'Failed to load', true);
       }
