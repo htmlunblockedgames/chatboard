@@ -53,7 +53,7 @@
     }
     textarea{min-height:120px; resize:vertical; line-height:1.58}
 
-    /* Buttons – unified size & font */
+    /* Buttons */
     .btn{
       display:inline-flex; align-items:center; justify-content:center;
       padding:10px 14px; border-radius:12px; border:1px solid var(--border);
@@ -114,10 +114,10 @@
     }
     .action:hover{background:#f8f8f8}
 
-    /* Replies container under each top-level */
+    /* Replies container */
     .replies{display:none; margin-top:10px; padding-left:0; display:flex; flex-direction:column; gap:10px}
 
-    /* Load older – full bubble width */
+    /* Load older */
     #loadMore{
       display:none; margin:8px var(--inner) 18px;
       width:calc(100% - var(--inner)*2);
@@ -140,7 +140,7 @@
       100%{ background-position: 10px -10px, -12px 16px, 0 0; }
     }
 
-    /* Admin avatar: subtle sweep overlay to match username glow */
+    /* Admin avatar shimmer */
     .avatar.admin{
       position: relative;
       background: radial-gradient(circle at 30% 30%, #fff6c2, #ffd84a 40%, #f8b500 70%);
@@ -160,9 +160,7 @@
       pointer-events:none;
       animation: avatarSweep var(--glow-avatar-dur, 3.2s) ease-in-out infinite;
     }
-    @keyframes avatarSweep{
-      to { transform: translateX(120%); }
-    }
+    @keyframes avatarSweep{ to { transform: translateX(120%); } }
 
     /* Admin username – dimmer, indefinite shimmer */
     .nick.admin-glow{
@@ -184,8 +182,9 @@
       100% { background-position: 200% 0; }
     }
 
-    /* Text glow sweep on message content (applies when .glow-text is added) */
+    /* Text glow sweep on message content */
     .content .glow-text{
+      display:inline;
       background: linear-gradient(90deg,
         #8f7200 0%,
         #d9c056 18%,
@@ -195,15 +194,13 @@
       background-size: 200% 100%;
       -webkit-background-clip: text;
       background-clip: text;
-      color: var(--text);               /* keep base text visible underneath */
-      -webkit-text-fill-color: transparent; /* show gradient inside glyphs */
+      color: var(--text);
+      -webkit-text-fill-color: transparent;
       animation-name: glowSweep;
       animation-duration: var(--glow-dur, 2s);
-      animation-timing-function: cubic-bezier(.2,.8,.2,1); /* smooth ease-out/in */
+      animation-timing-function: cubic-bezier(.2,.8,.2,1);
     }
-
     .content .glow-fade{
-      /* keep gradient present while text fades back to normal to avoid white flash */
       transition:
         color var(--fade-dur, 2s) ease-in-out,
         -webkit-text-fill-color var(--fade-dur, 2s) ease-in-out,
@@ -288,6 +285,6 @@
     </section>
   </main>
 
-  <script src="index.js?v=18"></script>
+  <script src="index.js?v=20"></script>
 </body>
 </html>

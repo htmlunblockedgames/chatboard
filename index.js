@@ -1,5 +1,5 @@
 /* Poly Track Chatboard – index.js */
-console.log("chatboard.index.js v18");
+console.log("chatboard.index.js v20");
 
 const WORKER_URL    = "https://twikoo-cloudflare.ertertertet07.workers.dev";
 const PAGE_URL_PATH = "/chatboard/";
@@ -7,7 +7,7 @@ const PAGE_HREF     = "https://htmlunblockedgames.github.io/chatboard/";
 const MAX_FILE_MB   = 7;
 const MAX_CHARS     = 2000;
 
-// WebSocket endpoint derived from the Worker URL
+/* Live updates via WebSocket */
 const WS_ENDPOINT = WORKER_URL.replace(/^http/i, 'ws').replace(/\/$/, '') + '/ws?room=' + encodeURIComponent(PAGE_URL_PATH);
 let ws = null, wsPing = null, wsBackoff = 500;
 function connectWS(){
@@ -37,6 +37,7 @@ function connectWS(){
   }
 }
 
+/* DOM refs */
 const $=id=>document.getElementById(id);
 const messagesEl=$("messages"), loadMoreBtn=$("loadMore");
 const nickEl=$("nick"), textEl=$("text");
@@ -60,6 +61,7 @@ const SHOW_ADMIN_PANEL =
   new URLSearchParams(window.location.search).get("admin") === "1";
 if (adminPanel) adminPanel.style.display = SHOW_ADMIN_PANEL ? "grid" : "none";
 
+/* State */
 let TK_TOKEN = localStorage.getItem('twikoo_access_token') || null;
 const state = { all:new Map(), tops:[], rootOrder:[] };
 let serverCounts = null;
@@ -69,12 +71,12 @@ let replyTarget=null;
 const expanded = new Set();
 let isAdmin = false;
 let rateBlockedUntil = 0;
-const flashedOnce = new Set();
 const pinAnimPlayed = new Set();
+const devAnimStartAt = new Map();
 let allowReplies = true; // global toggle
 let allowPosts = true;   // when false, only admin may post
-const devAnimStartAt = new Map(); // per-session start times for unpinned admin glow
 
+/* UI helpers */
 limitMbEl.textContent=MAX_FILE_MB;
 limitChars.textContent=MAX_CHARS;
 limitChars2.textContent=MAX_CHARS;
@@ -85,6 +87,7 @@ const setStatus=(t,isError=false)=>{
   statusEl.style.display="inline"; statusEl.textContent=t;
   statusEl.style.color = isError ? "var(--danger)" : "var(--muted)";
 };
+
 function fileToDataURL(file){ return new Promise((res,rej)=>{ const fr=new FileReader(); fr.onerror=()=>rej(fr.error||new Error("FileReader error")); fr.onload=()=>res(fr.result); fr.readAsDataURL(file); }); }
 function insertAtCursor(el,text){ const s=el.selectionStart??el.value.length, e=el.selectionEnd??el.value.length; el.value=el.value.slice(0,s)+text+el.value.slice(e); const pos=s+text.length; el.setSelectionRange(pos,pos); el.focus(); }
 function truthy(v){ return v === true || v === 1 || v === '1' || v === 'true'; }
@@ -98,7 +101,7 @@ function parseRetryAfter(h){
 }
 function authorIsAdmin(c){ return String((c && c.nick) || '') === 'Poly Track Administrator'; }
 
-/* Render-safe: turn newlines into <br>, allow http(s) links and data/https images */
+/* Render-safe content: newlines -> <br>, allow data/https images & http(s) links only */
 function renderSafeContent(input){
   const text = String(input ?? "");
   const tpl = document.createElement('template');
@@ -182,6 +185,19 @@ async function api(eventObj){
 }
 
 /* Admin UI + toggles */
+function updateSendButtonUI(){
+  if (!btnSend) return;
+  if (!isAdmin && !allowPosts) {
+    btnSend.disabled = true;
+    btnSend.textContent = "Chat Locked";
+    btnSend.title = "Only admin can post right now";
+  } else {
+    btnSend.disabled = false;
+    btnSend.textContent = "Send";
+    btnSend.title = "";
+  }
+}
+
 function updateAdminUI(){
   const counts = serverCounts;
   const pinned = (counts && typeof counts.pinned === 'number')
@@ -221,20 +237,13 @@ function updateAdminUI(){
     togglePostsEl.disabled = !isAdmin;
     togglePostsEl.parentElement.style.display = isAdmin ? 'inline-flex' : 'none';
   }
-  // Disable Send for non-admin when posting is locked
-  if (!isAdmin && !allowPosts) {
-    btnSend.disabled = true;
-    btnSend.title = "Only admin can post right now";
-  } else {
-    btnSend.disabled = false;
-    btnSend.title = "";
-  }
 
-  // If replies globally disabled, ensure any reply pill is hidden
+  // real-time: update send button & cancel any active reply if replies are disabled
   if (!allowReplies) {
     replyTarget = null;
     replyTo.style.display = 'none';
   }
+  updateSendButtonUI();
 }
 
 async function refreshAdminStatus(){
@@ -275,18 +284,18 @@ function bindAdminTogglesOnce(){
     toggleRepliesEl.addEventListener('change', async (e) => {
       if (!isAdmin) { e.preventDefault(); updateAdminUI(); return; }
       const want = !!e.target.checked;
-      // Optimistic update for instant button hide/show
+
+      // Optimistic real-time: reflect immediately
       allowReplies = want;
       updateAdminUI();
       renderAll();
+
       e.target.disabled = true;
       try{
         const r = await api({ event: 'SET_CONFIG_FOR_ADMIN', set: { allowReplies: want } });
-        // Trust server state but keep UI in sync
         allowReplies = String(r?.config?.ALLOW_REPLIES ?? 'true').toLowerCase() !== 'false';
       }catch(err){
         setStatus(err?.message || 'Failed to update replies setting', true);
-        // Revert checkbox if server rejected
         allowReplies = !want;
         e.target.checked = !!allowReplies;
       }finally{
@@ -301,29 +310,28 @@ function bindAdminTogglesOnce(){
     togglePostsEl.addEventListener('change', async (e) => {
       if (!isAdmin) { e.preventDefault(); updateAdminUI(); return; }
       const onlyAdmin = !!e.target.checked; // checked = only admin can post
-      // Optimistic update
+
+      // Optimistic real-time
       allowPosts = !onlyAdmin;
       updateAdminUI();
-      renderAll();
+
       e.target.disabled = true;
       try{
         const r = await api({ event: 'SET_CONFIG_FOR_ADMIN', set: { allowPosts: !onlyAdmin } });
         allowPosts = String(r?.config?.ALLOW_POSTS ?? 'true').toLowerCase() !== 'false';
       }catch(err){
         setStatus(err?.message || 'Failed to update posting setting', true);
-        // Revert on failure
         allowPosts = !allowPosts;
         e.target.checked = !allowPosts;
       }finally{
         e.target.disabled = false;
         updateAdminUI();
-        renderAll();
       }
     });
   }
 }
 
-/* Flatten & render (preserve server root order) */
+/* Merge, compute nesting, preserve server root order */
 function mergeList(list){
   const temp = new Map();
   const pushItem = (src) => {
@@ -367,7 +375,6 @@ function mergeList(list){
     const obj = temp.get(id);
     if (obj && (obj.rid || "") === "" && !seen.has(id)) { rootsInOrder.push(obj); seen.add(id); }
   }
-  // Fallback: if none found, build by default rules
   if (!rootsInOrder.length) {
     for (const v of temp.values()) if ((v.rid || "") === "") rootsInOrder.push(v);
   }
@@ -417,108 +424,95 @@ function renderAll(){
   updateAdminUI();
 }
 
+/* ===== Glow animation helpers (admin only) ===== */
 function applyTextGlowOnce(el){
-  if (!el) return;
-  if (el.dataset.glowRunning === '1') return;
-  const w = el.scrollWidth || el.getBoundingClientRect().width || 0;
-  const pxPerSec = 250; // constant speed for long messages
-  const durSec = Math.max(2, w / pxPerSec);
-
-  // Target a ~2s fade-out; clamp to total duration to avoid negative delay
-  const fadeSec = Math.min(2, durSec);
-  const fadeDelay = Math.max(0, durSec - fadeSec);
-
-  el.dataset.glowRunning = '1';
-  el.classList.add('glow-text');
-  el.style.setProperty('--glow-dur', durSec + 's');
-  el.style.setProperty('--fade-dur', fadeSec + 's');
-
-  let faded = false;
-  const startFade = () => {
-    if (faded) return;
-    faded = true;
-    el.classList.add('glow-fade');
-  };
-
-  // begin fade near the end of the sweep so everything completes within total duration
-  const fadeTimer = setTimeout(startFade, Math.round(fadeDelay * 1000));
-
-  const onAnimEnd = () => {
-    // ensure fade has started (in case durations are very short)
-    startFade();
-  };
-
-  const onTransitionEnd = () => {
-    cleanup();
-  };
-
-  function cleanup(){
-    clearTimeout(fadeTimer);
-    el.removeEventListener('animationend', onAnimEnd);
-    el.removeEventListener('transitionend', onTransitionEnd);
-    // After fill is visible, drop gradient classes to finish cleanly with no flash
+  if (!el || el.dataset.glowRunning === '1') return;
+  requestAnimationFrame(() => {
     el.classList.remove('glow-text','glow-fade');
     el.style.removeProperty('--glow-dur');
     el.style.removeProperty('--fade-dur');
-    delete el.dataset.glowRunning;
-  }
+    el.style.display = 'inline';
 
-  el.addEventListener('animationend', onAnimEnd, { once:true });
-  el.addEventListener('transitionend', onTransitionEnd, { once:true });
+    const rect = el.getBoundingClientRect();
+    const w = Math.max(1, el.scrollWidth || rect.width || 0);
+    const pxPerSec = 250;
+    const durSec = Math.max(2, w / pxPerSec);
+    const fadeSec = Math.min(2, durSec);
+    const fadeDelay = Math.max(0, durSec - fadeSec);
+
+    void el.offsetWidth;
+    el.dataset.glowRunning = '1';
+    el.classList.add('glow-text');
+    el.style.setProperty('--glow-dur', durSec + 's');
+    el.style.setProperty('--fade-dur', fadeSec + 's');
+
+    let faded = false;
+    const startFade = () => { if (!faded){ faded = true; el.classList.add('glow-fade'); } };
+    const fadeTimer = setTimeout(startFade, Math.round(fadeDelay * 1000));
+
+    const cleanup = () => {
+      clearTimeout(fadeTimer);
+      el.classList.remove('glow-text','glow-fade');
+      el.style.removeProperty('--glow-dur');
+      el.style.removeProperty('--fade-dur');
+      el.style.removeProperty('display');
+      delete el.dataset.glowRunning;
+    };
+
+    el.addEventListener('animationend', startFade, { once:true });
+    el.addEventListener('transitionend', cleanup, { once:true });
+  });
 }
 
 function applyTextGlowRemainder(el, c){
-  if (!el || !c) return;
-  if (el.dataset.glowRunning === '1') return;
-
-  const w = el.scrollWidth || el.getBoundingClientRect().width || 0;
-  const pxPerSec = 250; // constant speed for long messages
-  const totalDur = Math.max(2, w / pxPerSec);
-
-  const created = Number(c.created || 0);
-  const elapsed = Math.max(0, (Date.now() - created) / 1000);
-  const remain = Math.max(0, totalDur - elapsed);
-  if (remain <= 0.05) return;
-
-  // Target a ~2s fade-out for the remaining time; clamp to remainder
-  const fadeSec = Math.min(2, remain);
-  const fadeDelay = Math.max(0, remain - fadeSec);
-
-  el.dataset.glowRunning = '1';
-  el.classList.add('glow-text');
-  el.style.setProperty('--glow-dur', remain + 's');
-  el.style.setProperty('--fade-dur', fadeSec + 's');
-
-  let faded = false;
-  const startFade = () => {
-    if (faded) return;
-    faded = true;
-    el.classList.add('glow-fade');
-  };
-
-  const fadeTimer = setTimeout(startFade, Math.round(fadeDelay * 1000));
-
-  const onAnimEnd = () => { startFade(); };
-  const onTransitionEnd = () => { cleanup(); };
-
-  function cleanup(){
-    clearTimeout(fadeTimer);
-    el.removeEventListener('animationend', onAnimEnd);
-    el.removeEventListener('transitionend', onTransitionEnd);
+  if (!el || !c || el.dataset.glowRunning === '1') return;
+  requestAnimationFrame(() => {
     el.classList.remove('glow-text','glow-fade');
     el.style.removeProperty('--glow-dur');
     el.style.removeProperty('--fade-dur');
-    delete el.dataset.glowRunning;
-  }
+    el.style.display = 'inline';
 
-  el.addEventListener('animationend', onAnimEnd, { once:true });
-  el.addEventListener('transitionend', onTransitionEnd, { once:true });
+    const rect = el.getBoundingClientRect();
+    const w = Math.max(1, el.scrollWidth || rect.width || 0);
+    const pxPerSec = 250;
+    const totalDur = Math.max(2, w / pxPerSec);
+
+    const created = Number(c.created || 0);
+    const elapsed = Math.max(0, (Date.now() - created) / 1000);
+    const remain = Math.max(0, totalDur - elapsed);
+    if (remain <= 0.05) { el.style.removeProperty('display'); return; }
+
+    const fadeSec = Math.min(2, remain);
+    const fadeDelay = Math.max(0, remain - fadeSec);
+
+    void el.offsetWidth;
+    el.dataset.glowRunning = '1';
+    el.classList.add('glow-text');
+    el.style.setProperty('--glow-dur', remain + 's');
+    el.style.setProperty('--fade-dur', fadeSec + 's');
+
+    let faded = false;
+    const startFade = () => { if (!faded){ faded = true; el.classList.add('glow-fade'); } };
+    const fadeTimer = setTimeout(startFade, Math.round(fadeDelay * 1000));
+
+    const cleanup = () => {
+      clearTimeout(fadeTimer);
+      el.classList.remove('glow-text','glow-fade');
+      el.style.removeProperty('--glow-dur');
+      el.style.removeProperty('--fade-dur');
+      el.style.removeProperty('display');
+      delete el.dataset.glowRunning;
+    };
+
+    el.addEventListener('animationend', startFade, { once:true });
+    el.addEventListener('transitionend', cleanup, { once:true });
+  });
 }
 
-function shouldGlow(_c){
-  return false; // non-admin messages no longer glow
-}
+/* Only admins glow */
+function shouldGlow(_c){ return false; }
 
+/* Render one message */
 function renderMsg(c){
   const cid = c._id || c.id;
   const wrap=document.createElement("div"); wrap.className="msg"; wrap.dataset.cid=cid;
@@ -530,9 +524,8 @@ function renderMsg(c){
   else if (c.avatar){ const img=new Image(); img.src=c.avatar; img.alt=c.nick||"avatar"; avatar.appendChild(img); }
   else { avatar.textContent = initialOf(c.nick); }
 
-  // Slightly vary avatar glow duration
   if (adminAuthor) {
-    const base = 3.2, jitter = (cid.charCodeAt(0)%10)/20; // 0..0.45s
+    const base = 3.2, jitter = (cid.charCodeAt(0)%10)/20;
     avatar.style.setProperty('--glow-avatar-dur', (base + jitter).toFixed(2) + 's');
   }
 
@@ -556,7 +549,6 @@ function renderMsg(c){
   body.classList.add('glow-target');
   content.appendChild(body);
 
-  // Admin-only glow rules
   if (adminAuthor) {
     const isPinnedRoot = Number(c.top) === 1 && ((c.rid || "") === "");
     if (isPinnedRoot) {
@@ -568,7 +560,6 @@ function renderMsg(c){
     } else {
       const now = Date.now();
       const lastStart = devAnimStartAt.get(cid) || 0;
-      // throttle restarts to once every 3s
       if (now - lastStart >= 3000) {
         applyTextGlowRemainder(body, c);
         devAnimStartAt.set(cid, now);
@@ -579,7 +570,6 @@ function renderMsg(c){
   }
 
   const actions=document.createElement("div"); actions.className="actions";
-  // Determine if this comment is in a locked thread (lock is stored on the root)
   const rootIdForLock = (c.rid && c.rid !== "") ? c.rid : (c._id || c.id);
   const rootForLock = state.all.get(rootIdForLock);
   const threadLocked = !!(rootForLock && rootForLock.locked);
@@ -598,352 +588,277 @@ function renderMsg(c){
 
     if ((c.rid || '') === '') {
       const pinBtn = document.createElement('span');
-      pinBtn.className = 'action'; pinBtn.dataset.action = 'adminPin'; pinBtn.dataset.cid = cid; pinBtn.textContent = Number(c.top) === 1 ? 'Unpin' : 'Pin';
+      pinBtn.className = 'action'; pinBtn.dataset.action = 'adminPin';
+      pinBtn.dataset.cid = cid; pinBtn.textContent = Number(c.top) === 1 ? 'Unpin' : 'Pin';
       actions.appendChild(pinBtn);
 
-      // per-thread lock/unlock
       const lockBtn = document.createElement('span');
-      lockBtn.className = 'action'; lockBtn.dataset.action = 'adminLock'; lockBtn.dataset.cid = cid;
-      lockBtn.textContent = c.locked ? 'Unlock Replies' : 'Lock Replies';
+      lockBtn.className = 'action'; lockBtn.dataset.action = 'adminLock';
+      lockBtn.dataset.cid = cid; lockBtn.textContent = threadLocked ? 'Unlock Replies' : 'Lock Replies';
       actions.appendChild(lockBtn);
 
-      // Reorder pins – only show for pinned root
       if (Number(c.top) === 1) {
         const upBtn = document.createElement('span');
-        upBtn.className = 'action'; upBtn.dataset.action='pinUp'; upBtn.dataset.cid=cid; upBtn.textContent='Move Up';
-        const downBtn = document.createElement('span');
-        downBtn.className = 'action'; downBtn.dataset.action='pinDown'; downBtn.dataset.cid=cid; downBtn.textContent='Move Down';
-        actions.append(upBtn, downBtn);
+        upBtn.className = 'action'; upBtn.dataset.action = 'pinMoveUp'; upBtn.dataset.cid = cid; upBtn.textContent = 'Pin ▲';
+        const dnBtn = document.createElement('span');
+        dnBtn.className = 'action'; dnBtn.dataset.action = 'pinMoveDown'; dnBtn.dataset.cid = cid; dnBtn.textContent = 'Pin ▼';
+        actions.appendChild(upBtn); actions.appendChild(dnBtn);
       }
     }
   }
 
-  bubble.append(meta,content,actions);
   wrap.append(avatar,bubble);
+  bubble.append(meta,content,actions);
   return wrap;
 }
 
-function buildReplies(container, parent){
-  container.innerHTML="";
-  const kids = (parent.children||[]).slice().sort((a,b)=>(a.created||0)-(b.created||0));
-  for (const ch of kids) container.appendChild(renderMsg(ch));
-}
-
-/* Newline spam protection (client-side) */
-function sanitizeOutgoing(s){
-  if (!s) return "";
-  s = String(s).replace(/\r\n?/g, "\n");
-  // Collapse excessive blank lines
-  s = s.replace(/\n{3,}/g, "\n\n");
-  // Limit total lines
-  const MAX_LINES = 30;
-  const lines = s.split("\n");
-  if (lines.length > MAX_LINES) {
-    s = lines.slice(0, MAX_LINES).join("\n") + "\n…";
+function buildReplies(container, root){
+  container.innerHTML = "";
+  const frag = document.createDocumentFragment();
+  for (const child of (root.children || [])){
+    const node = renderMsg(child);
+    frag.appendChild(node);
   }
-  return s;
+  container.appendChild(frag);
 }
 
 /* Loading */
 async function loadLatest(){
-  if (loading) return; loading=true;
+  if (loading) return;
+  loading=true;
   try{
-    const r = await api({event:"COMMENT_GET", url: PAGE_URL_PATH, page:1, pageSize:20});
-    const raw = Array.isArray(r?.data) ? r.data : Array.isArray(r?.data?.comments) ? r.data.comments : [];
-    const list = raw.map(row => ({
-      _id: row._id || row.id, id: row.id || row._id, url: row.url,
-      nick: row.nick || 'Anonymous', mail: row.mail || '', link: row.link || '',
-      comment: row.comment ?? row.content ?? '', created: Number(row.created ?? row.created_at ?? Date.now()),
-      top: Number(row.top ? 1 : 0), pid: row.pid || '', rid: row.rid || '',
-      locked: !!row.locked
-    }));
-    if (r?.data?.counts) serverCounts = r.data.counts; else if (typeof r?.data?.count === 'number') serverCounts = { total: Number(r.data.count) };
-    mergeList(list);
+    const r = await api({ event: 'COMMENT_GET', url: PAGE_URL_PATH, page: 1, pageSize: 100 });
+    const comments = r?.data?.comments || [];
+    serverCounts = r?.data?.counts || null;
+    mergeList(comments);
     renderAll();
-    if (r && r.more === false) loadMoreBtn.style.display="none";
-  }catch(e){ setStatus((e?.message)||"Failed to load messages.", true); }
-  finally{ loading=false; }
+  }catch(e){
+    setStatus(e?.message || 'Failed to load', true);
+  }finally{
+    loading=false;
+  }
 }
 
 async function loadOlder(){
-  if (loading || !earliestMainCreated) return;
-  loading=true; loadMoreBtn.disabled=true; loadMoreBtn.textContent="Loading…";
+  if (loading) return;
+  if (!earliestMainCreated) return;
+  loading=true;
+  loadMoreBtn.disabled=true; loadMoreBtn.textContent="Loading…";
   try{
-    const r = await api({event:"COMMENT_GET", url: PAGE_URL_PATH, page:1, pageSize:20, before: earliestMainCreated});
-    const raw = Array.isArray(r?.data) ? r.data : Array.isArray(r?.data?.comments) ? r.data.comments : [];
-    const data = raw.map(row => ({
-      _id: row._id || row.id, id: row.id || row._id, url: row.url,
-      nick: row.nick || 'Anonymous', mail: row.mail || '', link: row.link || '',
-      comment: row.comment ?? row.content ?? '', created: Number(row.created ?? row.created_at ?? Date.now()),
-      top: Number(row.top ? 1 : 0), pid: row.pid || '', rid: row.rid || '',
-      locked: !!row.locked
-    }));
-    if (r?.data?.counts) serverCounts = r.data.counts; else if (typeof r?.data?.count === 'number') serverCounts = { total: Number(r.data.count) };
-
-    // Combine with existing comments and re-merge to preserve relationships
-    const existing = Array.from(state.all.values()).map(v => ({
-      _id: v._id, id: v._id, url: PAGE_URL_PATH,
-      nick: v.nick || 'Anonymous', mail: '', link: '',
-      comment: v.comment || '', created: Number(v.created || Date.now()),
-      top: Number(v.top ? 1 : 0), pid: v.pid || '', rid: v.rid || '',
-      locked: !!v.locked
-    }));
-    mergeList([...existing, ...data]);
+    const r = await api({ event: 'COMMENT_GET', url: PAGE_URL_PATH, page: 1, pageSize: 100, before: earliestMainCreated });
+    const list = r?.data?.comments || [];
+    const prevAll = new Map(state.all);
+    const prevTopsLen = state.tops.length;
+    mergeList([...(list||[]), ...Array.from(prevAll.values())]);
+    // keep expanded set for previously expanded threads
     renderAll();
-    loadMoreBtn.disabled=false; loadMoreBtn.textContent="Load older";
-    if (!data.length) loadMoreBtn.style.display="none";
+    if (state.tops.length === prevTopsLen) loadMoreBtn.textContent="No more";
+    else { loadMoreBtn.disabled=false; loadMoreBtn.textContent="Load older"; }
   }catch(e){
-    setStatus((e?.message)||"Failed to load older messages.", true);
+    setStatus(e?.message || 'Failed to load older', true);
     loadMoreBtn.disabled=false; loadMoreBtn.textContent="Load older";
-  }finally{ loading=false; }
+  }finally{
+    loading=false;
+  }
 }
 
-/* Actions */
-async function doSend(){
-  let nick = (nickEl.value||"").trim();
-  if (!nick) nick = "Anonymous";
+/* Compose & send */
+function sanitizeClient(content){
+  let s = String(content || "");
+  // collapse 3+ blank lines
+  s = s.replace(/\r\n?/g, "\n").replace(/\n{3,}/g, "\n\n");
+  // enforce char limit client-side
+  if (s.length > MAX_CHARS) s = s.slice(0, MAX_CHARS);
+  return s;
+}
 
-  let content = (textEl.value||"").trim();
-  content = sanitizeOutgoing(content);
-  if (!content) { setStatus("Nothing to send.", true); return; }
-  if (content.length > MAX_CHARS) content = content.slice(0, MAX_CHARS);
+async function sendMessage(){
+  const raw = textEl.value;
+  const content = sanitizeClient(raw).trim();
+  if (!content) return;
 
-  // Block non-admin when posts locked
+  // respect global posting lock
   if (!isAdmin && !allowPosts) {
-    setStatus("Only admin can post right now", true);
+    updateSendButtonUI();
     return;
   }
 
+  const nick = (nickEl.value || "Anonymous").trim().slice(0, 40);
   const payload = {
-    event: "COMMENT_SUBMIT",
+    event: 'COMMENT_CREATE',
     url: PAGE_URL_PATH,
-    nick,
-    content
+    nick: isAdmin ? "Poly Track Administrator" : (nick || "Anonymous"),
+    content,
   };
-
-  // reply targeting (only if globally allowed and not thread-locked)
-  if (allowReplies && replyTarget) {
-    const rootId = replyTarget.rid || replyTarget._id || replyTarget.id;
-    const root = state.all.get(rootId);
-    if (!root || !root.locked) {
-      payload.pid = replyTarget._id || replyTarget.id || "";
-      payload.rid = rootId || "";
-    }
+  if (allowReplies && replyTarget && state.all.has(replyTarget)) {
+    const p = state.all.get(replyTarget);
+    payload.pid = p._id || p.id;
+    payload.rid = p.rid || p._id || p.id;
   }
 
   btnSend.disabled=true;
   try{
     const r = await api(payload);
     if (r && r.code === 0) {
-      textEl.value = "";
-      charCount.textContent = "0";
-      replyTarget = null;
-      replyTo.style.display = "none";
-      setStatus("Sent!");
-      setTimeout(()=>setStatus(""), 800);
-      // Optimistically reload
-      await loadLatest();
-      // If we have a websocket, server will also push refresh
+      textEl.value = ""; charCount.textContent = "0";
+      replyTarget = null; replyTo.style.display="none";
+      setStatus('Sent!');
     } else {
-      throw new Error((r && (r.message||r.msg)) || "Send failed");
+      setStatus(r?.message || 'Send failed', true);
     }
   }catch(e){
-    setStatus(e?.message || "Send failed", true);
+    setStatus(e?.message || 'Send failed', true);
   }finally{
     btnSend.disabled=false;
+    updateSendButtonUI();
   }
 }
 
-async function doAttach(){
+/* Image attach */
+async function attachImage(){
   const f = fileEl.files && fileEl.files[0];
-  if (!f) { setStatus("Choose an image first"); return; }
-  if (!/^image\//i.test(f.type)) { setStatus("Not an image file", true); return; }
-  const max = MAX_FILE_MB * 1024 * 1024;
-  if (f.size > max) { setStatus(`Image too large (max ${MAX_FILE_MB}MB)`, true); return; }
-
-  btnAttach.disabled = true;
-  setStatus("Uploading image…");
+  if (!f) { setStatus('Choose an image first'); return; }
+  const mb = f.size/1024/1024;
+  if (mb > MAX_FILE_MB) { setStatus(`Image too large (>${MAX_FILE_MB}MB)`, true); return; }
   try{
-    const dataURL = await fileToDataURL(f);
-    const r = await api({ event:"UPLOAD_IMAGE", photo: dataURL, url: PAGE_URL_PATH });
-    if (r && r.code === 0 && r.data && r.data.url) {
-      insertAtCursor(textEl, (textEl.value && !textEl.value.endsWith('\n') ? '\n' : '') + `<img src="${r.data.url}">\n`);
-      fileEl.value = "";
-      fileInfo.textContent = "";
-      setStatus("Image attached");
-      setTimeout(()=>setStatus(""), 800);
-      textEl.focus();
+    setStatus('Uploading…');
+    const dataUrl = await fileToDataURL(f);
+    const resp = await api({ event:'UPLOAD_IMAGE', photo:dataUrl, url: PAGE_URL_PATH });
+    if (resp?.code === 0 && resp?.data?.url) {
+      insertAtCursor(textEl, `\n<img src="${resp.data.url}">\n`);
+      setStatus('Image attached!');
     } else {
-      throw new Error((r && (r.message || r.msg)) || "Image upload failed");
+      setStatus(resp?.message || 'Image upload failed', true);
     }
   }catch(e){
-    setStatus(e?.message || "Image upload failed", true);
-  }finally{
-    btnAttach.disabled = false;
+    setStatus(e?.message || 'Image upload failed', true);
   }
 }
 
-function onFileChosen(){
+/* Events */
+btnSend.addEventListener('click', sendMessage);
+textEl.addEventListener('input', ()=>{
+  let v = textEl.value || "";
+  if (v.length > MAX_CHARS) { v = v.slice(0, MAX_CHARS); textEl.value = v; }
+  charCount.textContent = String(v.length);
+});
+fileEl.addEventListener('change', ()=>{
   const f = fileEl.files && fileEl.files[0];
-  if (!f) { fileInfo.textContent=""; return; }
-  const mb = (f.size/1024/1024).toFixed(2);
-  fileInfo.textContent = `${f.name} • ${mb} MB`;
-}
-
-/* Delegated click handling on messages */
-messagesEl.addEventListener('click', async (e)=>{
-  const btn = e.target.closest('.action');
-  if (!btn) return;
-  const action = btn.dataset.action || btn.textContent;
-  const wrap = e.target.closest('.msg');
-  if (!wrap) return;
-  const cid = wrap.dataset.cid;
-  const c = state.all.get(cid);
-  if (!c) return;
-
-  if (action === 'reply'){
-    if (!allowReplies) { setStatus('Replies are disabled', true); return; }
-    // resolve root lock
-    const rootId = c.rid || c._id || c.id;
-    const root = state.all.get(rootId);
-    if (root && root.locked) { setStatus('Replies are locked for this thread', true); return; }
-    replyTarget = c;
-    replyName.textContent = c.nick || 'Anonymous';
-    replyTo.style.display = 'inline-flex';
-    textEl.focus();
-    return;
-  }
-
-  if (action === 'toggleReplies'){
-    const parent = btn.dataset.parent || (c._id || c.id);
-    if (expanded.has(parent)) expanded.delete(parent); else expanded.add(parent);
-    renderAll();
-    return;
-  }
-
-  if (!isAdmin) return;
-
-  if (action === 'adminDel'){
-    // one-click delete (no confirm)
-    try{
-      await api({ event:"COMMENT_DELETE_FOR_ADMIN", id: c._id || c.id, url: PAGE_URL_PATH });
-      setStatus('Deleted');
-      setTimeout(()=>setStatus(''), 600);
-      await loadLatest();
-    }catch(err){
-      setStatus(err?.message || 'Delete failed', true);
-    }
-    return;
-  }
-
-  if (action === 'adminPin'){
-    try{
-      const wantTop = Number(c.top) !== 1;
-      await api({ event:"COMMENT_SET_FOR_ADMIN", id: c._id || c.id, url: PAGE_URL_PATH, set:{ top: wantTop } });
-      await loadLatest();
-    }catch(err){
-      setStatus(err?.message || 'Pin toggle failed', true);
-    }
-    return;
-  }
-
-  if (action === 'adminLock'){
-    try{
-      const rootId = (c.rid && c.rid !== "") ? c.rid : (c._id || c.id);
-      const root = state.all.get(rootId);
-      const wantLock = !(root && root.locked);
-      await api({ event:"COMMENT_TOGGLE_LOCK_FOR_ADMIN", id: rootId, url: PAGE_URL_PATH, lock: wantLock });
-      await loadLatest();
-    }catch(err){
-      setStatus(err?.message || 'Lock toggle failed', true);
-    }
-    return;
-  }
-
-  if (action === 'pinUp' || action === 'pinDown'){
-    try{
-      const pinned = state.tops.filter(x => Number(x.top) === 1).map(x => x._id);
-      const idx = pinned.indexOf(c._id);
-      if (idx >= 0) {
-        const swap = action === 'pinUp' ? idx-1 : idx+1;
-        if (swap >=0 && swap < pinned.length) {
-          const tmp = pinned[idx]; pinned[idx] = pinned[swap]; pinned[swap] = tmp;
-          await api({ event:"COMMENT_REORDER_PINS_FOR_ADMIN", url: PAGE_URL_PATH, order: pinned });
-          await loadLatest();
-        }
-      }
-    }catch(err){
-      setStatus(err?.message || 'Reorder failed', true);
-    }
-    return;
-  }
+  fileInfo.textContent = f ? `${f.name} (${(f.size/1024/1024).toFixed(2)} MB)` : '';
 });
+btnAttach.addEventListener('click', attachImage);
+replyCancel.addEventListener('click', ()=>{ replyTarget=null; replyTo.style.display='none'; });
 
-/* Reply cancel */
-replyCancel.addEventListener('click', ()=>{
-  replyTarget = null;
-  replyTo.style.display = 'none';
-});
-
-/* Login / Logout */
-if (btnAdminLogin) btnAdminLogin.addEventListener('click', async ()=>{
-  const pw = (adminPass.value||'').trim();
-  if (!pw) { setStatus('Enter password', true); return; }
+btnAdminLogin.addEventListener('click', async ()=>{
+  const pass = adminPass.value || "";
+  if (!pass) return;
   try{
-    const r = await api({ event:'LOGIN', password: pw });
-    if (r && r.code === 0 && r.accessToken) {
-      TK_TOKEN = r.accessToken; localStorage.setItem('twikoo_access_token', TK_TOKEN);
-      isAdmin = true; localStorage.setItem('twikoo_is_admin','1');
-      adminPass.value = '';
+    const r = await api({ event:'LOGIN', password: pass });
+    if (r?.accessToken) {
+      TK_TOKEN = r.accessToken;
+      localStorage.setItem('twikoo_access_token', TK_TOKEN);
+      isAdmin = true;
+      adminPass.value = "";
       await refreshAdminStatus();
       await loadLatest();
-      setStatus('Logged in');
-      setTimeout(()=>setStatus(''), 800);
     } else {
-      throw new Error((r && (r.message||r.msg)) || 'Login failed');
+      setStatus(r?.message || 'Login failed', true);
     }
-  }catch(err){
-    setStatus(err?.message || 'Login failed', true);
+  }catch(e){
+    setStatus(e?.message || 'Login failed', true);
   }
 });
-
-if (btnAdminLogout) btnAdminLogout.addEventListener('click', ()=>{
+btnAdminLogout.addEventListener('click', async ()=>{
   TK_TOKEN = null;
   localStorage.removeItem('twikoo_access_token');
   localStorage.removeItem('twikoo_is_admin');
   isAdmin = false;
-  updateAdminUI();
-  setStatus('Logged out');
-  setTimeout(()=>setStatus(''), 800);
+  await refreshAdminStatus();
+  await loadLatest();
 });
 
-/* Composer events */
-textEl.addEventListener('input', ()=>{
-  const v = textEl.value || '';
-  if (v.length > MAX_CHARS) {
-    textEl.value = v.slice(0, MAX_CHARS);
-  }
-  charCount.textContent = String(textEl.value.length);
-});
-fileEl.addEventListener('change', onFileChosen);
-btnAttach.addEventListener('click', doAttach);
-btnSend.addEventListener('click', doSend);
-
-/* Load older */
 loadMoreBtn.addEventListener('click', loadOlder);
 
-/* INIT */
+/* Message action delegation */
+messagesEl.addEventListener('click', async (e)=>{
+  const t = e.target.closest('.action'); if (!t) return;
+  const msgEl = e.target.closest('.msg'); const cid = msgEl?.dataset?.cid;
+
+  if (t.dataset.action === 'reply'){
+    if (!allowReplies) return;
+    replyTarget = cid;
+    const c = state.all.get(cid);
+    replyName.textContent = c?.nick || 'Anonymous';
+    replyTo.style.display = 'flex';
+    textEl.focus();
+    return;
+  }
+
+  if (!isAdmin) return; // below are admin-only
+
+  if (t.dataset.action === 'adminDel'){
+    try{
+      const r = await api({ event:'COMMENT_DELETE_FOR_ADMIN', id: cid, url: PAGE_URL_PATH });
+      if (r?.code === 0) setStatus('Deleted');
+      else setStatus(r?.message || 'Delete failed', true);
+    }catch(err){ setStatus(err?.message || 'Delete failed', true); }
+    return;
+  }
+
+  if (t.dataset.action === 'adminPin'){
+    try{
+      const c = state.all.get(cid);
+      const wantTop = !(Number(c?.top||0) === 1);
+      const r = await api({ event:'COMMENT_SET_FOR_ADMIN', id: cid, url: PAGE_URL_PATH, set: { top: wantTop }});
+      if (r?.code === 0) setStatus(wantTop ? 'Pinned' : 'Unpinned');
+      else setStatus(r?.message || 'Pin failed', true);
+    }catch(err){ setStatus(err?.message || 'Pin failed', true); }
+    return;
+  }
+
+  if (t.dataset.action === 'adminLock'){
+    try{
+      const c = state.all.get(cid);
+      const rootId = (c.rid && c.rid !== "") ? c.rid : cid;
+      const rootObj = state.all.get(rootId);
+      const wantLock = !(rootObj && rootObj.locked);
+      const r = await api({ event:'COMMENT_TOGGLE_LOCK_FOR_ADMIN', id: rootId, url: PAGE_URL_PATH, lock: wantLock });
+      if (r?.code === 0) setStatus(wantLock ? 'Replies locked' : 'Replies unlocked');
+      else setStatus(r?.message || 'Lock toggle failed', true);
+    }catch(err){ setStatus(err?.message || 'Lock toggle failed', true); }
+    return;
+  }
+
+  if (t.dataset.action === 'toggleReplies'){
+    const rootId = t.dataset.parent;
+    if (!rootId) return;
+    if (expanded.has(rootId)) expanded.delete(rootId); else expanded.add(rootId);
+    renderAll();
+    return;
+  }
+
+  if (t.dataset.action === 'pinMoveUp' || t.dataset.action === 'pinMoveDown'){
+    const dir = t.dataset.action === 'pinMoveUp' ? -1 : 1;
+    const currentPinned = state.tops.filter(x => Number(x.top)===1).map(x => x._id);
+    const idx = currentPinned.indexOf(cid);
+    if (idx < 0) return;
+    const swapIdx = idx + dir;
+    if (swapIdx < 0 || swapIdx >= currentPinned.length) return;
+    const tmp = currentPinned[idx]; currentPinned[idx] = currentPinned[swapIdx]; currentPinned[swapIdx] = tmp;
+    try{
+      const r = await api({ event:'COMMENT_REORDER_PINS_FOR_ADMIN', url: PAGE_URL_PATH, order: currentPinned });
+      if (r?.code === 0) setStatus('Pin order saved');
+      else setStatus(r?.message || 'Reorder failed', true);
+    }catch(err){ setStatus(err?.message || 'Reorder failed', true); }
+    return;
+  }
+});
+
+/* Init */
 (async function init(){
-  bindAdminTogglesOnce();
   await checkConnection();
   await refreshAdminStatus();
   await loadLatest();
   connectWS();
-
-  // If page not the admin view, kill admin panel visibility
-  if (!SHOW_ADMIN_PANEL && adminPanel) {
-    adminPanel.style.display = "none";
-  }
-
-  // If replies disabled on load, ensure no reply buttons visible (renderAll already handles it)
+  updateSendButtonUI();
 })();
