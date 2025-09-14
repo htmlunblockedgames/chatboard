@@ -1,5 +1,5 @@
 /* Poly Track Chatboard – index.js */
-console.log("chatboard.index.js v26");
+console.log("chatboard.index.js v27");
 
 const WORKER_URL    = "https://twikoo-cloudflare.ertertertet07.workers.dev";
 const PAGE_URL_PATH = "/chatboard/";
@@ -39,7 +39,7 @@ function connectWS(){
         if (e.data === 'pong') return;
         const doRefresh = async () => {
           try { await refreshAdminStatus(); } catch {}
-          try { await loadLatest(); } catch {}
+          try { await loadLatest(true); } catch {}   // <-- pass isRealtime=true for WS pushes
         };
         try {
           const msg = JSON.parse(e.data);
@@ -739,7 +739,7 @@ function renderAllIncremental(){
 }
 
 /* Loading */
-async function loadLatest(){
+async function loadLatest(isRealtime = false){
   if (loading) return;
   loading=true;
   try{
@@ -748,14 +748,18 @@ async function loadLatest(){
     serverCounts = r?.data?.counts || null;
     mergeList(comments);
 
-    // Auto-open threads that gained new replies since last snapshot (everyone in-session)
-    for (const root of state.tops) {
-      const id = root._id || root.id;
-      const count = root.children?.length || 0;
-      const prev = prevChildCounts.get(id) || 0;
-      if (count > prev) expanded.add(id);
+    // Auto-open only for in-session, real-time updates (not on initial reloads)
+    const shouldAutoOpen = !!isRealtime && prevChildCounts.size > 0;
+    if (shouldAutoOpen) {
+      for (const root of state.tops) {
+        const id = root._id || root.id;
+        const count = root.children?.length || 0;
+        const prev = prevChildCounts.get(id) || 0;
+        if (count > prev) expanded.add(id);
+      }
     }
-    // Update snapshot
+
+    // Always refresh the snapshot
     for (const root of state.tops) {
       const id = root._id || root.id;
       prevChildCounts.set(id, root.children?.length || 0);
@@ -905,13 +909,13 @@ async function attachImage(){
 /* General-purpose embed (admin only) */
 async function attachEmbed(){
   if (!isAdmin) { setStatus('Only admin can embed content', true); return; }
-  const mode = (prompt('Embed mode:\n- Type "url" to embed a website by URL\n- Type "html" to embed raw HTML (sandboxed)') || '').trim().toLowerCase();
+  const mode = (prompt('Embed mode:\n- Type \"url\" to embed a website by URL\n- Type \"html\" to embed raw HTML (sandboxed)') || '').trim().toLowerCase();
   if (!mode) return;
 
   if (mode === 'url') {
     const url = (prompt('Enter website URL (https://...)') || '').trim();
     if (!/^https?:\/\//i.test(url)) { setStatus('Please enter a valid http(s) URL', true); return; }
-    const html = `\n<iframe src="${url}" width="560" height="315" title="Embedded site" sandbox="allow-scripts allow-same-origin" loading="lazy" referrerpolicy="no-referrer"></iframe>\n`;
+    const html = `\n<iframe src=\"${url}\" width=\"560\" height=\"315\" title=\"Embedded site\" sandbox=\"allow-scripts allow-same-origin\" loading=\"lazy\" referrerpolicy=\"no-referrer\"></iframe>\n`;
     insertAtCursor(textEl, html);
     setStatus('Embed added!');
     return;
@@ -924,14 +928,14 @@ async function attachEmbed(){
       .replace(/&/g,'&amp;')
       .replace(/</g,'&lt;')
       .replace(/>/g,'&gt;')
-      .replace(/"/g,'&quot;');
-    const html = `\n<iframe srcdoc="${esc}" width="560" height="315" title="Embedded HTML" sandbox="allow-scripts allow-same-origin" loading="lazy" referrerpolicy="no-referrer"></iframe>\n`;
+      .replace(/\"/g,'&quot;');
+    const html = `\n<iframe srcdoc=\"${esc}\" width=\"560\" height=\"315\" title=\"Embedded HTML\" sandbox=\"allow-scripts allow-same-origin\" loading=\"lazy\" referrerpolicy=\"no-referrer\"></iframe>\n`;
     insertAtCursor(textEl, html);
     setStatus('Embed added!');
     return;
   }
 
-  setStatus('Type "url" or "html".', true);
+  setStatus('Type \"url\" or \"html\".', true);
 }
 
 /* Events */
@@ -965,7 +969,7 @@ btnAdminLogin.addEventListener('click', async ()=>{
       isAdmin = true;
       adminPass.value = "";
       await refreshAdminStatus();
-      await loadLatest();
+      await loadLatest(false);   // reload — not real-time
     } else {
       setStatus(r?.message || 'Login failed', true);
     }
@@ -979,7 +983,7 @@ btnAdminLogout.addEventListener('click', async ()=>{
   localStorage.removeItem('twikoo_is_admin');
   isAdmin = false;
   await refreshAdminStatus();
-  await loadLatest();
+  await loadLatest(false);       // reload — not real-time
 });
 
 loadMoreBtn.addEventListener('click', loadOlder);
@@ -1064,7 +1068,7 @@ messagesEl.addEventListener('click', async (e)=>{
 (async function init(){
   await checkConnection();
   await refreshAdminStatus();
-  await loadLatest();
+  await loadLatest(false);   // initial load — not real-time
   connectWS();
   updateSendButtonUI();
 })();
