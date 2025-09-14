@@ -358,6 +358,14 @@ function bindAdminTogglesOnce(){
 }
 
 /* ===== Content rendering ===== */
+// Ensure a root's replies AND all nested replies are visible/hidden together
+function setRepliesVisibility(rootWrap, show){
+  if (!rootWrap) return;
+  rootWrap.style.display = show ? 'flex' : 'none';
+  // toggle all nested .replies under this root as well
+  const nested = rootWrap.querySelectorAll('.replies');
+  nested.forEach(el => { el.style.display = show ? 'flex' : 'none'; });
+}
 function renderSafeContent(input, opts = {}){
   const allowLinks = !!opts.allowLinks; const allowEmbeds = !!opts.allowEmbeds; const text = String(input ?? "");
   const tpl = document.createElement('template'); tpl.innerHTML = text.replace(/\\n/g, '<br>');
@@ -541,7 +549,7 @@ function renderOne(c){
       const rootMsg = messagesEl.querySelector(`.msg[data-id=\"${rootId}\"]`);
       if (rootMsg){
         const wrap = rootMsg.querySelector(':scope > .bubble > .replies');
-        if (wrap) wrap.style.display = 'flex';
+        if (wrap) setRepliesVisibility(wrap, true);
       }
     });
     actions.appendChild(btnReply);
@@ -622,10 +630,10 @@ function renderOne(c){
       btnToggle.addEventListener('click', () => {
         if (expanded.has(rootId)) {
           expanded.delete(rootId);
-          repliesWrap.style.display = 'none';
+          setRepliesVisibility(repliesWrap, false);
         } else {
           expanded.add(rootId);
-          repliesWrap.style.display = 'flex';
+          setRepliesVisibility(repliesWrap, true);
         }
         setLabel();
       });
@@ -689,13 +697,13 @@ function renderAllIncremental(){
     };
     renderSub(root.id, repliesWrap);
 
-    if (expanded.has(root.id)) repliesWrap.style.display = 'flex';
-    else repliesWrap.style.display = 'none';
+    if (expanded.has(root.id)) setRepliesVisibility(repliesWrap, true);
+    else setRepliesVisibility(repliesWrap, false);
 
     el.addEventListener('click', (evt)=>{
       if (evt.target && evt.target.classList.contains('action') && evt.target.textContent === 'Reply') {
         expanded.add(root.id);
-        repliesWrap.style.display = 'flex';
+        setRepliesVisibility(repliesWrap, true);
       }
     });
   }
