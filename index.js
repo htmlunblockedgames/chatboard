@@ -1,46 +1,25 @@
-/* Poly Track Chatboard – index.js (v38)
-   Fixes:
-   - Show “Replying to …” on replies; nested replies indent under parent.
-   - Admin can reply even when global replies are off (and it actually replies).
-   - Admin avatar is fixed "</>" (never replaced by message images).
-   - Pinned admin messages animate only once per page load, unless a new pin appears.
-   - Keeps previous features intact (pin reorder, two-tap confirms, live updates, etc).
+/* Poly Track Chatboard – index.js (v39)
+   - Embed allowlist hint: support ?embedHost=… (Google Sites path) for WS + HTTP
+   - Admin can reply even when global replies are off; non-admins cannot
+   - Non-admin: only 1 image per message (client + server)
+   - Nested replies render under parent with progressive indent
+   - “Replying to …” strip shown in replies
+   - Pinned badge on top-right of pinned roots
+   - Pin up/down reordering (admin-only) with live sync
+   - Two-tap “Are you sure?” for Unpin/Unlock/Delete (pinned only)
+   - Admin avatar fixed to "</>" (never replaced by attached image)
+   - Admin name shimmer (subtle); admin text glow sweep + 1.5s fade-out
+   - Pinned admin messages animate once per reload (session)
+   - Recent admin messages (≤5s) animate once
+   - Live config (replies/posts) updates UI instantly; WS pushes refresh
+   - “Chat Locked” label when only-admin-post mode is on (for non-admins)
+   - Anti-grief: collapse 2000+ chars/lines client-side before send
 */
 
-console.log("chatboard.index.js v38");
+console.log("chatboard.index.js v39");
 
-/* ---- Embedding guard: allow sites.google.com when embedded; otherwise don't client-block (server enforces) ---- */
-(function(){
-  try{
-    if (window.top !== window.self) {
-      let allowed = false;
-      const ref = document.referrer || '';
-
-      // Prefer referrer with path (often present on Google Sites)
-      try{
-        const u = new URL(ref);
-        if (u.hostname === 'sites.google.com') {
-          // If you want a soft client path check, you could do:
-          // const p = u.pathname.replace(/\/+$/,'');
-          // allowed = p.startsWith('/view/poly-track');
-          // But referrer may be stripped; don't hard-block on the client.
-          allowed = true;
-        }
-      }catch{}
-
-      // Fallback: ancestorOrigins is origin-only (no path), still OK to allow sites.google.com
-      if (!allowed && document.location && document.location.ancestorOrigins && document.location.ancestorOrigins.length){
-        try{
-          const a = new URL(document.location.ancestorOrigins[0]);
-          if (a.hostname === 'sites.google.com') allowed = true;
-        }catch{}
-      }
-
-      // If we still can't positively identify, do NOT block here.
-      // Let the Worker (server) enforce via CORS/allowlist.
-    }
-  }catch{}
-})();
+/* ===== Embed context (client does not hard-block; server enforces) ===== */
+const EMBED_HOST_HINT = new URLSearchParams(location.search).get('embedHost') || "";
 
 /* ===== Constants ===== */
 const WORKER_URL    = "https://twikoo-cloudflare.ertertertet07.workers.dev";
@@ -48,8 +27,9 @@ const PAGE_URL_PATH = "/chatboard/";
 const PAGE_HREF     = "https://htmlunblockedgames.github.io/chatboard/";
 const MAX_FILE_MB   = 7;
 const MAX_CHARS     = 2000;
+const ADMIN_NICK    = "Poly Track Administrator";
 
-/* ===== Global shimmer driver (stable across reflows/resizing) ===== */
+/* ===== Global shimmer driver (stable across reflows) ===== */
 (function startGlobalShimmer(){
   const durMs = 3200;
   let start = performance.now();
@@ -66,16 +46,20 @@ const MAX_CHARS     = 2000;
 })();
 
 /* ===== Live updates via WebSocket ===== */
-// UPDATED: forward parent/referrer context so the Worker can allow Google Sites embeds
-const __parentRef = document.referrer || "";
+const __parentRef =
+  EMBED_HOST_HINT ||
+  document.referrer || "";
+
 const __ancestor = (document.location && document.location.ancestorOrigins && document.location.ancestorOrigins.length)
   ? document.location.ancestorOrigins[0]
   : "";
+
 const WS_ENDPOINT =
   WORKER_URL.replace(/^http/i, 'ws').replace(/\/$/, '') +
   '/ws?room=' + encodeURIComponent(PAGE_URL_PATH) +
   '&parent=' + encodeURIComponent(__parentRef) +
-  '&ancestor=' + encodeURIComponent(__ancestor);
+  '&ancestor=' + encodeURIComponent(__ancestor) +
+  (EMBED_HOST_HINT ? ('&parentHint=' + encodeURIComponent(EMBED_HOST_HINT)) : '');
 
 let ws = null, wsPing = null, wsBackoff = 500;
 function connectWS(){
@@ -144,18 +128,19 @@ if (!window.__wsStarted) { window.__wsStarted = true; try { connectWS(); } catch
 
 /* ===== State ===== */
 let TK_TOKEN = localStorage.getItem('twikoo_access_token') || null;
-const state = { all:new Map(), roots:[] };
+const state = { all:new Map(), roots:[], childrenByRoot:new Map(), parentOf:new Map() };
 let serverCounts = null;
 let loading=false;
 let replyTarget=null;
-const expanded = new Set();                   // threads expanded in this session
+const expanded = new Set();                   // rootIds expanded in this session
 const prevChildCounts = new Map();            // rootId -> count (last render) for auto-open
 let seededChildCounts = false;                // seed on first successful load
 let isAdmin = false;
 let rateBlockedUntil = 0;
 let allowReplies = true;
 let allowPosts = true;
-const sessionAnimatedPinned = new Set();      // animate each pinned admin message only once per reload
+const sessionAnimatedPinned = new Set();      // pinned admin msg ids animated in this reload
+const animatedOnce = new Set();               // any msg id already animated once (recent admin)
 
 /* ===== UI helpers ===== */
 if (limitMbEl) limitMbEl.textContent=MAX_FILE_MB;
@@ -172,7 +157,7 @@ const initialOf = s => (s||"A").trim().charAt(0).toUpperCase();
 function truthy(v){ return v === true || v === 1 || v === '1' || v === 'true'; }
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 function parseRetryAfter(h){ if (!h) return 0; const n = Number(h); if (!Number.isNaN(n)) return Date.now() + n*1000; const d = Date.parse(h); return Number.isNaN(d) ? 0 : d; }
-function authorIsAdmin(c){ return String((c && c.nick) || '') === 'Poly Track Administrator'; }
+function authorIsAdmin(c){ return String((c && c.nick) || '') === ADMIN_NICK; }
 
 /* Inline confirm helper (two-tap) */
 function armConfirmButton(btn, label = 'Are you sure?', ms = 3000){
@@ -210,9 +195,9 @@ async function api(eventObj){
     headers["Authorization"] = "Bearer " + TK_TOKEN;
     headers["access-token"] = TK_TOKEN;
   }
-  // NEW: forward embed context for strict server validation
+  // forward embed context (server allowlist)
   try {
-    headers["x-embed-parent"] = document.referrer || "";
+    headers["x-embed-parent"] = EMBED_HOST_HINT || document.referrer || "";
     if (document.location && document.location.ancestorOrigins && document.location.ancestorOrigins.length) {
       headers["x-embed-ancestor"] = document.location.ancestorOrigins[0];
     }
@@ -275,9 +260,6 @@ function updateAdminUI(){
   if (optNoReplyEl){ const show = !!isAdmin && !replyTarget; optNoReplyEl.style.display = show ? 'inline-flex' : 'none'; if (sendNoReplyEl) sendNoReplyEl.disabled = !show || !allowReplies; }
   if (optAutoPinEl){ const show = !!isAdmin && !replyTarget; optAutoPinEl.style.display = show ? 'inline-flex' : 'none'; if (sendAutoPinEl) sendAutoPinEl.disabled = !show; }
 
-  if (embedBox) embedBox.style.display = isAdmin ? 'flex' : 'none';
-
-  // IMPORTANT: do NOT clear admin's replyTarget when replies are globally off
   if (!allowReplies && !isAdmin) { replyTarget = null; if (replyTo) replyTo.style.display = 'none'; }
 
   updateSendButtonUI();
@@ -320,6 +302,35 @@ btnAttach && !btnAttach.dataset.boundClick && (btnAttach.dataset.boundClick='1',
     } else { setStatus(resp && resp.message ? resp.message : 'Upload failed', true); }
   }catch(e){ setStatus(e && e.message ? e.message : 'Upload failed', true); }
 }));
+
+/* ===== Inline embed UI (admin only) ===== */
+if (embedModeEl && !embedModeEl.dataset.bound){
+  embedModeEl.dataset.bound='1';
+  embedModeEl.addEventListener('change', ()=>{
+    if (embedModeEl.value === 'html'){ embedHtmlEl.style.display='block'; embedUrlEl.style.display='none'; }
+    else { embedHtmlEl.style.display='none'; embedUrlEl.style.display='block'; }
+  });
+}
+if (btnEmbedInsert && !btnEmbedInsert.dataset.bound){
+  btnEmbedInsert.dataset.bound='1';
+  btnEmbedInsert.addEventListener('click', ()=>{
+    if (!isAdmin) return;
+    const mode = embedModeEl.value;
+    if (mode === 'url'){
+      const u = (embedUrlEl.value||'').trim();
+      if (!/^https?:\/\//i.test(u)) { setStatus('Enter a valid URL (https://…) for embed', true); return; }
+      const iframe = `<iframe src="${u}" sandbox="allow-scripts allow-same-origin" referrerpolicy="no-referrer" width="560" height="315" title="Embedded"></iframe>`;
+      textEl.value = (textEl.value.trim() ? (textEl.value+"\n") : "") + iframe;
+    }else{
+      const html = embedHtmlEl.value || '';
+      const srcdoc = html.replace(/<\/script>/gi,'</scr'+'ipt>');
+      const iframe = `<iframe srcdoc="${srcdoc.replace(/"/g,'&quot;')}" sandbox="allow-scripts allow-same-origin" referrerpolicy="no-referrer" width="560" height="315" title="Embedded"></iframe>`;
+      textEl.value = (textEl.value.trim() ? (textEl.value+"\n") : "") + iframe;
+    }
+    updateCharCount();
+    setStatus('Embed inserted (sandboxed)');
+  });
+}
 
 /* ===== Admin toggles (bind once) ===== */
 function bindAdminTogglesOnce(){
@@ -391,388 +402,335 @@ function createGlowOverlayOn(targetEl){
   ov.style.font = getComputedStyle(targetEl).font;
   targetEl.appendChild(ov); ov.style.setProperty('--glow-ol-opacity', '1'); return ov;
 }
-function applyOverlayGlowOnce(bodyEl){
-  const targets = bodyEl.querySelectorAll('.glow-target'); const list = targets.length ? [...targets] : [bodyEl];
-  list.forEach((tgt)=>{ const ov = createGlowOverlayOn(tgt); if (!ov) return; setTimeout(()=> { ov.style.setProperty('--glow-ol-opacity', '0'); }, 2000); setTimeout(()=> { ov.remove(); }, 3500); });
-}
-function applyOverlayGlowRemainder(bodyEl, c){
+
+/* Start a sweep + fade-out; won’t re-trigger if already animated */
+function maybeAnimateMessage(c, bodyEl){
+  const isPinnedAdmin = c.top && authorIsAdmin(c);
+  const isRecentAdmin = authorIsAdmin(c) && (Date.now() - Number(c.created || 0) <= 5000);
+  if (isPinnedAdmin) {
+    if (sessionAnimatedPinned.has(c.id)) return; // already this reload
+    sessionAnimatedPinned.add(c.id);
+  } else if (!isRecentAdmin || animatedOnce.has(c.id)) {
+    return;
+  } else {
+    animatedOnce.add(c.id);
+  }
+  // apply overlay to each text span inside body
   const targets = bodyEl.querySelectorAll('.glow-target');
   const list = targets.length ? [...targets] : [bodyEl];
-
-  const created = Number(c?.created || Date.now());
-  const elapsed = Math.max(0, (Date.now() - created) / 1000);
-  const remain = Math.max(0, 2 - elapsed); // finish the 2s sweep if not done
-
-  list.forEach((tgt) => {
+  list.forEach((tgt)=>{
     const ov = createGlowOverlayOn(tgt);
     if (!ov) return;
-
-    if (remain <= 0) {
-      // Sweep window already passed—still do a smooth 1.5s fade-out
-      ov.style.setProperty('--glow-ol-opacity', '0');      // triggers CSS transition
-      setTimeout(() => { try{ ov.remove(); } catch {} }, 1600); // let fade finish (no abrupt stop)
-    } else {
-      // Finish the remaining sweep, then fade 1.5s
-      setTimeout(() => {
-        ov.style.setProperty('--glow-ol-opacity', '0');
-      }, Math.round(remain * 1000));
-      setTimeout(() => { try{ ov.remove(); } catch {} }, Math.round(remain * 1000) + 1500);
-    }
+    // 2s sweep (driven by global --shimmer-x), then 1.5s fade-out
+    setTimeout(()=> { ov.style.opacity = '0'; }, 2000);
+    ov.addEventListener('transitionend', ()=>{ ov.remove(); }, { once:true });
   });
 }
 
-/* ===== Build actions (reply/pin/lock/delete/reorder) ===== */
-function buildActionsFor(c){
-  const actions = document.createElement('div'); actions.className = 'actions';
-  const cid = c.id; const isRoot = (c.rid||'') === '';
-  const rootIdForLock = isRoot ? cid : c.rid;
-  const rootForLock = state.all.get(rootIdForLock);
-  const threadLocked = !!(rootForLock && rootForLock.locked);
-
-  // Reply (admin can always reply)
-  if ((allowReplies || isAdmin) && (!threadLocked || isAdmin)){
-    const replyBtn = document.createElement('span'); replyBtn.className='action'; replyBtn.dataset.action='reply'; replyBtn.textContent='↩ Reply'; actions.appendChild(replyBtn);
-  }
-
-  // Toggle replies (roots with children)
-  const count = c.children?.length || 0;
-  if (isRoot && count > 0){
-    const toggleBtn = document.createElement('span'); toggleBtn.className='action'; toggleBtn.dataset.action='toggleReplies'; toggleBtn.dataset.parent=cid;
-    toggleBtn.textContent = (expanded.has(cid) ? (count===1? 'Close Reply':'Close Replies') : (count===1? 'Show Reply':'Show Replies'));
-    actions.appendChild(toggleBtn);
-  }
-
-  // Admin tools
-  if (isAdmin){
-    const delBtn = document.createElement('span'); delBtn.className='action'; delBtn.dataset.action='adminDel'; delBtn.dataset.cid=cid; delBtn.textContent='Delete'; actions.appendChild(delBtn);
-
-    if (isRoot){
-      const pinBtn = document.createElement('span'); pinBtn.className='action'; pinBtn.dataset.action='adminPin'; pinBtn.dataset.cid=cid; pinBtn.textContent = Number(c.top)===1 ? 'Unpin' : 'Pin'; actions.appendChild(pinBtn);
-
-      if (Number(c.top)===1){
-        const up = document.createElement('span'); up.className='action'; up.dataset.action='pinUp'; up.dataset.cid=cid; up.textContent='▲'; actions.appendChild(up);
-        const down = document.createElement('span'); down.className='action'; down.dataset.action='pinDown'; down.dataset.cid=cid; down.textContent='▼'; actions.appendChild(down);
-      }
-
-      const lockBtn = document.createElement('span'); lockBtn.className='action'; lockBtn.dataset.action='lockToggle'; lockBtn.dataset.cid=rootIdForLock; lockBtn.textContent = threadLocked ? 'Unlock replies' : 'Lock replies'; actions.appendChild(lockBtn);
+/* ===== Build & render ===== */
+function buildThread(data){
+  state.all.clear(); state.roots = []; state.childrenByRoot.clear(); state.parentOf.clear();
+  const arr = Array.isArray(data?.comments) ? data.comments : [];
+  for (const c of arr) state.all.set(c.id, c);
+  const roots = arr.filter(c => !c.rid); // rid empty => top level
+  state.roots = roots;
+  // map parent relations
+  for (const c of arr){
+    if (c.rid){ // belongs to root rid
+      if (!state.childrenByRoot.has(c.rid)) state.childrenByRoot.set(c.rid, []);
+      state.childrenByRoot.get(c.rid).push(c);
     }
+    if (c.pid){ state.parentOf.set(c.id, c.pid); }
   }
-  return actions;
+  for (const [rid, list] of state.childrenByRoot) list.sort((a,b)=> a.created - b.created); // oldest -> newest within thread
 }
 
-/* ===== Build one message node ===== */
-function buildMessage(c){
-  const wrap = document.createElement('div'); wrap.className='msg'; wrap.dataset.id=c.id; wrap.dataset.rid=c.rid||''; wrap.dataset.top=String(Number(c.top||0));
-  if (Number(c.top)===1 && (c.rid||'')===''){ const badge=document.createElement('span'); badge.className='pin-badge'; badge.textContent='Pinned'; wrap.appendChild(badge); }
-
-  const avatar = document.createElement('div'); 
-  avatar.className = 'avatar' + (authorIsAdmin(c) ? ' admin' : '');
-  if (authorIsAdmin(c)) {
-    avatar.textContent = "</>";
-  } else {
-    avatar.textContent = initialOf(c.nick);
+function renderOne(c, depth=0){
+  const msg = document.createElement('div'); msg.className = 'msg'; msg.dataset.id = c.id;
+  if (c.top) {
+    const badge = document.createElement('span'); badge.className='pin-badge'; badge.textContent='PINNED';
+    msg.appendChild(badge);
   }
 
+  // avatar
+  const av = document.createElement('div'); av.className = 'avatar'; if (authorIsAdmin(c)) { av.classList.add('admin'); av.textContent='</>'; }
+  else { av.textContent = initialOf(c.nick); }
+  msg.appendChild(av);
+
+  // bubble
   const bubble = document.createElement('div'); bubble.className='bubble';
   const meta = document.createElement('div'); meta.className='meta';
-  const nick = document.createElement('span'); nick.className='nick' + (authorIsAdmin(c) ? ' admin-glow' : ''); nick.textContent = c.nick || 'Anonymous';
-  const when = document.createElement('span'); when.textContent = new Date(c.created||Date.now()).toLocaleString();
-  meta.appendChild(nick); meta.appendChild(when);
+  const nick = document.createElement('span'); nick.className='nick'; nick.textContent = c.nick || 'Anonymous';
+  if (authorIsAdmin(c)) nick.classList.add('admin-glow');
+  const time = document.createElement('span'); time.textContent = new Date(c.created||Date.now()).toLocaleString();
+  meta.appendChild(nick); meta.appendChild(time);
+  bubble.appendChild(meta);
 
-  const body = document.createElement('div'); body.className='content';
+  // content
+  const content = document.createElement('div'); content.className='content';
+  const body = renderSafeContent(c.content, { allowLinks:true, allowEmbeds:isAdmin }); // only admin can embed
+  content.appendChild(body);
 
-  // Replying-to line (shows who the reply targets)
-  if ((c.rid || '') !== ''){
-    const parent = state.all.get(c.pid || c.rid);
-    const who = parent ? (parent.nick || 'Anonymous') : 'thread';
-    const replyLine = document.createElement('div');
-    replyLine.className = 'replying-to';
-    replyLine.textContent = `↪ Replying to ${who}`;
-    body.appendChild(replyLine);
-  }
-
-  const safe = renderSafeContent(c.content, { allowLinks:true, allowEmbeds:isAdmin });
-  body.appendChild(safe);
-
-  // Admin text animation:
-  if (authorIsAdmin(c)){
-    if (Number(c.top)===1 && (c.rid||'')===''){
-      // Pinned admin message: animate only once per pinned id per page load
-      if (!sessionAnimatedPinned.has(c.id)) { applyOverlayGlowOnce(safe); sessionAnimatedPinned.add(c.id); }
-    } else {
-      const age = Date.now() - Number(c.created||0);
-      if (age <= 5000) applyOverlayGlowRemainder(safe, c);
+  // replying-to line (if this is a reply)
+  if (c.pid){
+    const parent = state.all.get(c.pid);
+    if (parent){
+      const rline = document.createElement('div'); rline.className='replying-to';
+      rline.textContent = `↳ in reply to ${parent.nick || 'Anonymous'}`;
+      bubble.insertBefore(rline, content);
     }
   }
 
-  bubble.appendChild(meta); bubble.appendChild(body);
-  bubble.appendChild(buildActionsFor(c));
+  bubble.appendChild(content);
 
-  wrap.appendChild(avatar); wrap.appendChild(bubble);
+  // actions
+  const actions = document.createElement('div'); actions.className='actions';
 
-  // Replies container (nested inside bubble so indentation accumulates)
-  if ((c.children?.length||0) > 0){
-    const rep = document.createElement('div'); rep.className='replies'; rep.dataset.parent=c.id;
-    if (expanded.has(c.id)) rep.style.display='flex';
-    c.children.forEach(ch => { rep.appendChild(buildMessage(ch)); });
-    bubble.appendChild(rep);
+  const canReply =
+    (isAdmin) ? true
+              : (!!allowReplies && !c.locked);
+
+  if (canReply){
+    const btnReply = document.createElement('span'); btnReply.className='action'; btnReply.textContent='Reply';
+    btnReply.addEventListener('click', ()=>{
+      replyTarget = c;
+      if (replyTo){ replyTo.style.display='flex'; replyName.textContent = c.nick || 'Anonymous'; }
+      // expand thread for all in session via server push (we rely on new child count auto-open)
+    });
+    actions.appendChild(btnReply);
   }
-  return wrap;
+
+  if (isAdmin && !c.rid){ // root-level admin controls
+    const btnLock = document.createElement('span'); btnLock.className='action';
+    btnLock.textContent = c.locked ? 'Unlock replies' : 'Lock replies';
+    btnLock.addEventListener('click', async()=>{
+      if (c.top){ // two-tap only for pinned
+        if (!armConfirmButton(btnLock, 'Are you sure?')) return;
+      }
+      try{
+        await api({ event:'COMMENT_TOGGLE_LOCK_FOR_ADMIN', id:c.id, url:PAGE_URL_PATH, lock: !c.locked });
+        await loadLatest(true);
+      }catch(e){ setStatus(e?.message||'Failed to toggle replies', true); }
+    });
+    actions.appendChild(btnLock);
+
+    const btnPin = document.createElement('span'); btnPin.className='action'; btnPin.textContent = c.top ? 'Unpin' : 'Pin';
+    btnPin.addEventListener('click', async()=>{
+      if (c.top){ // unpin confirm
+        if (!armConfirmButton(btnPin, 'Are you sure?')) return;
+      }
+      try{
+        if (!c.top){
+          // enforce max 3 on client as well
+          const pinnedNow = (serverCounts?.pinned ?? state.roots.filter(x => x.top).length);
+          if (pinnedNow >= 3){ setStatus('You already have 3 pins', true); return; }
+        }
+        await api({ event:'COMMENT_SET_FOR_ADMIN', id:c.id, url:PAGE_URL_PATH, set:{ top: !c.top } });
+        await loadLatest(true);
+      }catch(e){ setStatus(e?.message||'Failed to toggle pin', true); }
+    });
+    actions.appendChild(btnPin);
+
+    if (c.top){
+      const up = document.createElement('span'); up.className='action'; up.textContent='▲';
+      const dn = document.createElement('span'); dn.className='action'; dn.textContent='▼';
+      up.addEventListener('click', ()=>reorderPin(c.id, -1));
+      dn.addEventListener('click', ()=>reorderPin(c.id, +1));
+      actions.appendChild(up); actions.appendChild(dn);
+    }
+
+    // Delete (two-tap only if pinned)
+    const del = document.createElement('span'); del.className='action'; del.textContent='Delete';
+    del.addEventListener('click', async()=>{
+      if (c.top){ if (!armConfirmButton(del, 'Are you sure?')) return; }
+      try{ await api({ event:'COMMENT_DELETE_FOR_ADMIN', id:c.id, url:PAGE_URL_PATH }); await loadLatest(true); }
+      catch(e){ setStatus(e?.message||'Failed to delete', true); }
+    });
+    actions.appendChild(del);
+  }
+
+  bubble.appendChild(actions);
+  msg.appendChild(bubble);
+
+  // replies container
+  const repliesWrap = document.createElement('div'); repliesWrap.className='replies';
+  if (expanded.has(c.id)) repliesWrap.style.display='flex';
+  msg.appendChild(repliesWrap);
+
+  // animate admin text if needed
+  maybeAnimateMessage(c, body);
+
+  return { el: msg, repliesWrap };
 }
 
-/* ===== Merge + Render ===== */
-function indexById(list){ const m = new Map(); list.forEach(x=>m.set(x.id,x)); return m; }
-function asTree(comments){
-  const byId = indexById(comments);
-  const roots = []; comments.forEach(c=>{ c.children = []; });
-  comments.forEach(c=>{ if ((c.rid||'')===''){ roots.push(c); } });
-  comments.forEach(c=>{ if ((c.rid||'')!==''){ const r = byId.get(c.rid); if (r) r.children.push(c); } });
-  roots.forEach(r=> r.children.sort((a,b)=> a.created - b.created)); // oldest->newest within thread
-  return { byId, roots };
+async function reorderPin(id, delta){
+  try{
+    // derive current desired order from DOM (by pinned roots sequence)
+    const pinnedIds = [...messagesEl.querySelectorAll('.msg')].map(d=>d.dataset.id).filter(id=>{
+      const c = state.all.get(id); return c && !c.rid && c.top;
+    });
+    const idx = pinnedIds.indexOf(id); if (idx<0) return;
+    const j = idx + delta; if (j<0 || j>=pinnedIds.length) return;
+    const swap = pinnedIds[j]; pinnedIds[j] = pinnedIds[idx]; pinnedIds[idx] = swap;
+    await api({ event:'COMMENT_REORDER_PINS_FOR_ADMIN', url: PAGE_URL_PATH, order: pinnedIds });
+    await loadLatest(true);
+  }catch(e){ setStatus(e?.message||'Failed to reorder pins', true); }
 }
-function renderAll(){
+
+function clearMessages(){ while(messagesEl && messagesEl.firstChild) messagesEl.removeChild(messagesEl.firstChild); }
+
+function renderAllIncremental(){
   if (!messagesEl) return;
-  messagesEl.innerHTML = '';
-  state.roots.forEach(r => { messagesEl.appendChild(buildMessage(r)); });
+  clearMessages();
+
+  // determine which roots should be expanded (auto-open if child count increased)
+  for (const r of state.roots){
+    const childCount = (state.childrenByRoot.get(r.id)||[]).length;
+    if (!seededChildCounts) prevChildCounts.set(r.id, childCount);
+    else {
+      const prev = prevChildCounts.get(r.id) || 0;
+      if (childCount > prev) expanded.add(r.id);
+      prevChildCounts.set(r.id, childCount);
+    }
+  }
+  seededChildCounts = true;
+
+  // roots order is already provided by server (pins first with saved order)
+  for (const root of state.roots){
+    const { el, repliesWrap } = renderOne(root, 0);
+    messagesEl.appendChild(el);
+
+    // render children (nested tree)
+    const children = state.childrenByRoot.get(root.id) || [];
+    const byId = new Map(children.map(x=>[x.id,x]));
+    const kidsOf = new Map(); children.forEach(ch => { const p = ch.pid || root.id; if (!kidsOf.has(p)) kidsOf.set(p, []); kidsOf.get(p).push(ch); });
+    const renderSub = (parentId, container) => {
+      const arr = kidsOf.get(parentId) || [];
+      for (const ch of arr){
+        const { el: childEl, repliesWrap: childWrap } = renderOne(ch, 1);
+        container.appendChild(childEl);
+        renderSub(ch.id, childWrap);
+      }
+    };
+    renderSub(root.id, repliesWrap);
+
+    // show or hide replies
+    if (expanded.has(root.id)) repliesWrap.style.display = 'flex';
+    else repliesWrap.style.display = 'none';
+
+    // clicking on any reply expands its root in-session (so everyone in session sees open)
+    el.addEventListener('click', (evt)=>{
+      if (evt.target && evt.target.classList.contains('action') && evt.target.textContent === 'Reply') {
+        expanded.add(root.id);
+        repliesWrap.style.display = 'flex';
+      }
+    });
+  }
 }
-function renderAllIncremental(){ renderAll(); }
 
 /* ===== Loading ===== */
-async function loadLatest(force=false){
-  if (loading) return; loading=true; setStatus('');
+async function loadLatest(invalidate=false){
+  if (loading) return; loading = true;
   try{
-    const r = await api({ event:'COMMENT_GET', url: PAGE_URL_PATH, page:1, pageSize:50 });
-    if (r && r.code===0 && r.data){
-      const list = (r.data.comments||[]).map(c=>({
-        id:c.id, url:c.url, nick:c.nick, content:c.content, created:Number(c.created||c.created_at||Date.now()),
-        top: c.top?1:0, pid: c.pid||'', rid: c.rid||'', locked: !!c.locked
-      }));
-      const { byId, roots } = asTree(list);
-      state.all = byId; state.roots = roots;
-      serverCounts = r.data.counts || null;
-
-      // ===== Session auto-open logic for replies =====
-      if (!seededChildCounts){
-        roots.forEach(rt => prevChildCounts.set(rt.id, rt.children.length||0));
-        seededChildCounts = true;
-      } else {
-        const deltas = [];
-        roots.forEach(rt => {
-          const prev = prevChildCounts.get(rt.id) ?? 0;
-          const cur = rt.children.length || 0;
-          if (cur > prev) deltas.push(rt.id);
-          prevChildCounts.set(rt.id, cur);
-        });
-        deltas.forEach(id => expanded.add(id)); // expand threads that gained replies this session
-      }
-
-      updateAdminUI(); // also re-renders
-    } else {
-      if (r && (r.code === 403 || String(r.message||"").toLowerCase().includes("forbidden origin"))) {
-        document.body.innerHTML = '<div style="padding:16px;font-family:Inter,system-ui,sans-serif;color:#555">Embedding not allowed. <a href="https://sites.google.com/view/poly-track/" target="_top" rel="noopener">Open Poly Track</a>.</div>';
-      } else {
-        setStatus(r && r.message ? r.message : 'Failed to load', true);
-      }
-    }
-  }catch(e){ setStatus(e?.message || 'Load error', true); }
-  finally{ loading=false; }
+    const r = await api({ event:'GET', url: PAGE_URL_PATH, page:1, pageSize: 200 });
+    serverCounts = r?.data?.counts || null;
+    buildThread(r?.data);
+    renderAllIncremental();
+    updateAdminUI();
+  }catch(e){ setStatus(e?.message||'Load failed', true); }
+  finally{ loading = false; }
 }
 
-/* ===== Send (admin auto pin / no-reply) ===== */
-async function sendComment(){
-  const nick = isAdmin ? 'Poly Track Administrator' : (nickEl?.value.trim().slice(0,10) || 'Anonymous');
-  let content = (textEl?.value || '').trim();
-  if (!content){ setStatus('Type a message'); return; }
-  if (!isAdmin && !allowPosts){ setStatus('Only admin can post right now', true); return; }
-
-  // sanitize: collapse >2 blank lines
-  content = content.replace(/\r\n?/g,'\n').replace(/\n{3,}/g,'\n\n');
-
-  const isReplying = !!replyTarget;
-  const pid = isReplying ? (replyTarget.pid || '') : '';
-  const rid = isReplying ? (replyTarget.rid || replyTarget.id || '') : '';
-
-  // Admin pre-check: if auto-pin is requested on a new root, enforce max 3 pins
-  if (isAdmin && !isReplying && sendAutoPinEl && sendAutoPinEl.checked){
-    const pinnedNow = (serverCounts && typeof serverCounts.pinned === 'number')
-      ? serverCounts.pinned
-      : state.roots.filter(r=> Number(r.top)===1).length;
-    if (pinnedNow >= 3){
-      setStatus('Pin limit reached (3). Unpin a message first.', true);
-      return;
-    }
-  }
-
-  const res = await api({ event:'COMMENT_SUBMIT', url: PAGE_URL_PATH, nick, content, pid, rid });
-  if (res && res.code===0){
-    const newId = res.data && res.data.id;
-
-    // Post-submit admin actions for new root messages
-    if (isAdmin && !isReplying && newId){
-      try{
-        if (sendNoReplyEl && sendNoReplyEl.checked){
-          await api({ event:'COMMENT_TOGGLE_LOCK_FOR_ADMIN', id: newId, url: PAGE_URL_PATH, lock: true });
-        }
-        if (sendAutoPinEl && sendAutoPinEl.checked){
-          await api({ event:'COMMENT_SET_FOR_ADMIN', id: newId, url: PAGE_URL_PATH, set:{ top: true } });
-        }
-      }catch(e){
-        setStatus(e?.message || 'Post action failed', true);
-      }
-    }
-
-    // Reset UI
-    textEl.value=''; updateCharCount();
-    replyTarget=null; if (replyTo) replyTo.style.display='none';
-
-    // Refresh
-    await loadLatest(true);
-  } else {
-    setStatus(res && res.message ? res.message : 'Send failed', true);
-  }
-}
-
-/* ===== Actions handling ===== */
-function nearestMsg(el){ while(el && el!==document.body){ if (el.classList && el.classList.contains('msg')) return el; el = el.parentElement; } return null; }
-function parentRootId(c){ return (c.rid||'')===''? c.id : c.rid; }
-
-if (!document.body.dataset.boundActions){
-  document.body.dataset.boundActions='1';
-  document.body.addEventListener('click', async (e)=>{
-    const target = e.target.closest('.action'); if (!target) return;
-    const msg = nearestMsg(target); const cid = msg?.dataset?.id; const rid = msg?.dataset?.rid || '';
-    const act = target.dataset.action;
-
-    if (act === 'reply'){
-      // Set reply target (admin can reply even if global off)
-      const c = state.all.get(cid); replyTarget = { id: cid, pid: cid, rid: parentRootId(c) };
-      if (replyTo){ replyTo.style.display='flex'; replyName.textContent = c?.nick || 'Anonymous'; }
-      updateAdminUI();
-      return;
-    }
-
-    if (act === 'toggleReplies'){
-      const pid = target.dataset.parent || cid; if (expanded.has(pid)) expanded.delete(pid); else expanded.add(pid);
-      renderAllIncremental();
-      return;
-    }
-
-    if (act === 'adminDel'){
-      if (!isAdmin) return;
-      const c = state.all.get(cid) || {};
-      const isRoot = (c.rid || '') === '';
-      const isPinnedRoot = isRoot && Number(c.top) === 1;
-      // Two-tap confirm ONLY for pinned root messages
-      if (isPinnedRoot){
-        if (!armConfirmButton(target, 'Are you sure?', 3000)) return; // second click confirms
-      }
-      const url = PAGE_URL_PATH;
-      const r = await api({ event:'COMMENT_DELETE_FOR_ADMIN', id: c.id, url });
-      if (r && r.code===0){ await loadLatest(true); }
-      else { setStatus(r && r.message ? r.message : 'Delete failed', true); }
-      return;
-    }
-
-    if (act === 'adminPin'){
-      if (!isAdmin) return;
-      const c = state.all.get(cid) || {};
-      const isRoot = (c.rid || '') === '';
-      const isPinned = Number(c.top) === 1;
-      const wantTop = isPinned ? 0 : 1;
-      // Two-tap confirm ONLY when UNPINNING a pinned root
-      if (isRoot && isPinned && wantTop === 0){
-        if (!armConfirmButton(target, 'Are you sure?', 3000)) return;
-      }
-      const r = await api({ event:'COMMENT_SET_FOR_ADMIN', id: c.id, url: PAGE_URL_PATH, set:{ top: !!wantTop } });
-      if (r && r.code===0){ await loadLatest(true); }
-      else { setStatus(r && r.message ? r.message : 'Pin toggle failed', true); }
-      return;
-    }
-
-    if (act === 'pinUp' || act === 'pinDown'){
-      if (!isAdmin) return;
-      // Build current pinned order from DOM (roots only)
-      const pinnedEls = [...document.querySelectorAll('.msg[data-top="1"][data-rid=""]')];
-      const order = pinnedEls.map(el => el.dataset.id);
-      const idx = order.indexOf(cid);
-      if (idx === -1) return;
-      if (act === 'pinUp' && idx > 0) { [order[idx-1], order[idx]] = [order[idx], order[idx-1]]; }
-      if (act === 'pinDown' && idx < order.length-1) { [order[idx+1], order[idx]] = [order[idx], order[idx+1]]; }
-      const resp = await api({ event:'COMMENT_REORDER_PINS_FOR_ADMIN', url: PAGE_URL_PATH, order });
-      if (resp && resp.code===0){ await loadLatest(true); }
-      else { setStatus(resp && resp.message ? resp.message : 'Reorder failed', true); }
-      return;
-    }
-
-    if (act === 'lockToggle'){
-      if (!isAdmin) return;
-      const c = state.all.get(cid) || {};
-      const rootId = (c.rid || '') === '' ? c.id : c.rid;
-      const root = state.all.get(rootId) || {};
-      const locked = !!root.locked;
-      const isPinnedRoot = ((root.rid || '') === '') && Number(root.top) === 1;
-      // Two-tap confirm ONLY when UNLOCKING a pinned root
-      if (isPinnedRoot && locked){
-        if (!armConfirmButton(target, 'Are you sure?', 3000)) return;
-      }
-      const resp = await api({ event:'COMMENT_TOGGLE_LOCK_FOR_ADMIN', id: rootId, url: PAGE_URL_PATH, lock: !locked });
-      if (resp && resp.code===0){ await loadLatest(true); }
-      else { setStatus(resp && resp.message ? resp.message : 'Lock toggle failed', true); }
-      return;
-    }
-  });
-}
-
-/* ===== Login / Logout ===== */
-btnAdminLogin && btnAdminLogin.addEventListener('click', async ()=>{
-  const password = adminPass?.value || '';
-  const r = await api({ event:'LOGIN', password });
-  if (r && r.code===0 && r.accessToken){ TK_TOKEN = r.accessToken; localStorage.setItem('twikoo_access_token', TK_TOKEN); await refreshAdminStatus(); await loadLatest(true); }
-  else { setStatus(r && r.message ? r.message : 'Login failed', true); }
-});
-btnAdminLogout && btnAdminLogout.addEventListener('click', async ()=>{
-  TK_TOKEN = null; localStorage.removeItem('twikoo_access_token'); localStorage.removeItem('twikoo_is_admin'); await refreshAdminStatus(); await loadLatest(true);
+/* ===== Auth & send ===== */
+btnAdminLogin && btnAdminLogin.addEventListener('click', async()=>{
+  const pw = (adminPass && adminPass.value) || "";
+  setStatus('Logging in…');
+  try{
+    const r = await api({ event:'LOGIN', password: pw });
+    if (r && r.code===0 && r.accessToken){ TK_TOKEN = r.accessToken; localStorage.setItem('twikoo_access_token', TK_TOKEN); await refreshAdminStatus(); setStatus(''); }
+    else setStatus(r?.message || 'Login failed', true);
+  }catch(e){ setStatus(e?.message||'Login failed', true); }
 });
 
-/* ===== Reply UI ===== */
+btnAdminLogout && btnAdminLogout.addEventListener('click', async()=>{
+  TK_TOKEN = null; localStorage.removeItem('twikoo_access_token'); localStorage.removeItem('twikoo_is_admin'); isAdmin = false; await refreshAdminStatus();
+});
+
 replyCancel && replyCancel.addEventListener('click', ()=>{ replyTarget=null; if (replyTo) replyTo.style.display='none'; updateAdminUI(); });
 
-/* ===== Send button ===== */
-btnSend && btnSend.addEventListener('click', ()=>{ sendComment().catch(e=> setStatus(e?.message||'Send error', true)); });
+btnSend && btnSend.addEventListener('click', async()=>{
+  let content = (textEl.value || '').trim();
+  if (!content){ setStatus('Type something'); return; }
+  if (!isAdmin && !allowPosts){ setStatus('Only admin can post right now', true); return; }
 
-/* ===== Embed UI (inline, admin only) ===== */
-if (embedModeEl && !embedModeEl.dataset.bound){
-  embedModeEl.dataset.bound='1';
-  embedModeEl.addEventListener('change', ()=>{
-    if (!embedUrlEl || !embedHtmlEl) return;
-    if (embedModeEl.value === 'url'){ embedUrlEl.style.display='block'; embedHtmlEl.style.display='none'; }
-    else { embedUrlEl.style.display='none'; embedHtmlEl.style.display='block'; }
-  });
-}
-if (btnEmbedInsert && !btnEmbedInsert.dataset.bound){
-  btnEmbedInsert.dataset.bound='1';
-  btnEmbedInsert.addEventListener('click', ()=>{
-    if (!isAdmin){ setStatus('Embeds are admin-only', true); return; }
-    if (!textEl) return;
-    const mode = embedModeEl?.value || 'url';
-    if (mode === 'url'){
-      const u = (embedUrlEl?.value||'').trim(); if (!u){ setStatus('Enter a URL to embed'); return; }
-      const html = `<iframe src="${u.replace(/"/g,'&quot;')}" width="560" height="315" sandbox="allow-scripts allow-same-origin" referrerpolicy="no-referrer"></iframe>`;
-      textEl.value = (textEl.value + (textEl.value?'\n':'') + html).trim();
-    } else {
-      const raw = (embedHtmlEl?.value||'').trim(); if (!raw){ setStatus('Enter HTML to embed'); return; }
-      const srcdoc = raw.replace(/"/g,'&quot;');
-      const html = `<iframe srcdoc="${srcdoc}" width="560" height="315" sandbox="allow-scripts allow-same-origin" referrerpolicy="no-referrer"></iframe>`;
-      textEl.value = (textEl.value + (textEl.value?'\n':'') + html).trim();
+  // Anti-grief: cap chars/lines client-side
+  if (content.length > MAX_CHARS) content = content.slice(0, MAX_CHARS);
+  // collapse >2 blank lines
+  content = content.replace(/\r\n?/g, '\n').replace(/\n{3,}/g, '\n\n');
+
+  // Non-admin: only one <img>
+  if (!isAdmin){
+    const imgCount = (content.match(/<img\b[^>]*>/gi) || []).length;
+    if (imgCount > 1) { setStatus('Only one image per message allowed', true); return; }
+  }
+
+  const nick = isAdmin ? ADMIN_NICK : (nickEl.value || '').trim().slice(0,10) || 'Anonymous';
+
+  // Auto-pin guard
+  if (isAdmin && !replyTarget && sendAutoPinEl && sendAutoPinEl.checked){
+    const currentPins = (serverCounts?.pinned ?? state.roots.filter(x=>x.top).length);
+    if (currentPins >= 3){ setStatus('You already have 3 pins', true); return; }
+  }
+
+  setStatus('Sending…');
+  btnSend.disabled = true;
+
+  try{
+    // Compose pid/rid (admin can reply even when global replies are off or thread locked)
+    const payload = {
+      event: 'COMMENT_CREATE',
+      url: PAGE_URL_PATH,
+      nick,
+      content,
+      pid: replyTarget ? replyTarget.id : "",
+      rid: replyTarget ? (replyTarget.rid || replyTarget.id) : ""
+    };
+    const r = await api(payload);
+    if (r && r.code===0){
+      const newId = r.data?.id;
+
+      // Optionally lock thread (no-reply) for new top-level admin message
+      if (isAdmin && !replyTarget && sendNoReplyEl && sendNoReplyEl.checked){
+        try { await api({ event:'COMMENT_TOGGLE_LOCK_FOR_ADMIN', id:newId, url: PAGE_URL_PATH, lock: true }); } catch{}
+      }
+      // Optionally pin
+      if (isAdmin && !replyTarget && sendAutoPinEl && sendAutoPinEl.checked){
+        try { await api({ event:'COMMENT_SET_FOR_ADMIN', id:newId, url: PAGE_URL_PATH, set:{ top:true } }); } catch{}
+      }
+
+      // clear composer
+      textEl.value=''; updateCharCount(); fileEl.value=''; if (fileInfo) fileInfo.textContent='';
+      replyTarget=null; if (replyTo) replyTo.style.display='none';
+      setStatus('');
+
+      // reload
+      await loadLatest(true);
+    }else{
+      setStatus(r?.message || 'Send failed', true);
     }
-    updateCharCount(); setStatus('Embed inserted');
-  });
-}
+  }catch(e){ setStatus(e?.message||'Send failed', true); }
+  finally{ btnSend.disabled = false; }
+});
 
 /* ===== Init ===== */
 (async function init(){
-  try{ await refreshAdminStatus(); } catch {}
-  try{ await loadLatest(true); } catch {}
-  try{ if (!window.__wsStarted) connectWS(); } catch {}
-  try{ updateCharCount(); } catch {}
+  // count bind
+  updateCharCount();
+
+  // initial config + load
+  try { await refreshAdminStatus(); } catch(e){ setStatus(e?.message||'Config failed', true); }
+  try { await loadLatest(true); } catch(e){ setStatus(e?.message||'Load failed', true); }
+
+  // live connection badge initial
+  if (connEl){ connEl.textContent = ws && ws.readyState===1 ? "Live: Connected" : "Live: Connecting…"; }
 })();
