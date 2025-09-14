@@ -254,6 +254,15 @@ function updateAdminUI(){
 
   document.body.classList.toggle('is-admin', !!isAdmin);
 
+  // Show admin panel whenever signed in (even without ?admin=1)
+  if (adminPanel) {
+    adminPanel.style.display = (SHOW_ADMIN_PANEL || isAdmin) ? 'grid' : 'none';
+  }
+  // Hide the nickname input row when admin is composing
+  if (nickEl && nickEl.parentElement) {
+    nickEl.parentElement.style.display = isAdmin ? 'none' : 'flex';
+  }
+
   if (toggleRepliesEl) {
     toggleRepliesEl.checked = !!allowReplies;
     toggleRepliesEl.disabled = !isAdmin;
@@ -819,6 +828,14 @@ messagesEl.addEventListener('click', async (e)=>{
   if (!isAdmin) return; // below are admin-only
 
   if (t.dataset.action === 'adminDel'){
+    {
+      const c = state.all.get(cid);
+      const isPinnedRoot = c && (c.rid || '') === '' && Number(c.top) === 1;
+      if (isPinnedRoot) {
+        const sure = window.confirm("Delete pinned message?\nThis will remove the thread and all its replies.");
+        if (!sure) return;
+      }
+    }
     try{
       const r = await api({ event:'COMMENT_DELETE_FOR_ADMIN', id: cid, url: PAGE_URL_PATH });
       if (r?.code === 0) setStatus('Deleted');
@@ -830,7 +847,20 @@ messagesEl.addEventListener('click', async (e)=>{
   if (t.dataset.action === 'adminPin'){
     try{
       const c = state.all.get(cid);
+      if (Number(c?.top || 0) === 1) {
+        const wantTop = false;
+        const isRoot = (c.rid || '') === '';
+        if (isRoot && !wantTop) {
+          const sure = window.confirm("Unpin this message?");
+          if (!sure) return;
+        }
+      }
       const wantTop = !(Number(c?.top||0) === 1);
+      // If currently pinned and we're about to unpin, confirm (root only)
+      if (!wantTop && (c && (c.rid || '') === '' && Number(c.top) === 1)) {
+        const sure = window.confirm("Unpin this message?");
+        if (!sure) return;
+      }
       const r = await api({ event:'COMMENT_SET_FOR_ADMIN', id: cid, url: PAGE_URL_PATH, set: { top: wantTop }});
       if (r?.code === 0) setStatus(wantTop ? 'Pinned' : 'Unpinned');
       else setStatus(r?.message || 'Pin failed', true);
@@ -844,6 +874,10 @@ messagesEl.addEventListener('click', async (e)=>{
       const rootId = (c.rid && c.rid !== "") ? c.rid : cid;
       const rootObj = state.all.get(rootId);
       const wantLock = !(rootObj && rootObj.locked);
+      if (!wantLock && rootObj && (rootObj.rid || '') === '' && Number(rootObj.top) === 1) {
+        const sure = window.confirm("Unlock replies for this pinned message?");
+        if (!sure) return;
+      }
       const r = await api({ event:'COMMENT_TOGGLE_LOCK_FOR_ADMIN', id: rootId, url: PAGE_URL_PATH, lock: wantLock });
       if (r?.code === 0) setStatus(wantLock ? 'Replies locked' : 'Replies unlocked');
       else setStatus(r?.message || 'Lock toggle failed', true);
