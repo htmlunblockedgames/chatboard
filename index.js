@@ -733,6 +733,20 @@ async function loadLatest(){
     const r = await api({ event:'GET', url: PAGE_URL_PATH, page:1, pageSize: 200 });
     // Populate seenIds for non-pinned messages on first load so we don’t animate historical backfill
     const incoming = Array.isArray(r?.data?.comments) ? r.data.comments : [];
+
+    // WS fallback: animate very recent admin messages on every refresh
+    const nowTs = Date.now();
+    for (const it of incoming) {
+      if (authorIsAdmin(it)) {
+        if (it.top) {
+          // Pinned admin messages should glow on every reload (session-limited by sessionAnimatedPinned)
+          mustAnimate.add(String(it.id));
+        } else if (nowTs - Number(it.created || 0) <= 5000) {
+          // Non‑pinned admin messages created within the last 5s should glow once for everyone
+          mustAnimate.add(String(it.id));
+        }
+      }
+    }
     if (!firstLoadDone) {
       for (const it of incoming) {
         if (it.top) {
