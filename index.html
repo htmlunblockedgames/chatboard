@@ -178,10 +178,6 @@
       background-position: var(--shimmer-x, 0%) 0;
       text-shadow: 0 0 3px rgba(245,196,0,.12), 0 0 6px rgba(245,196,0,.06);
     }
-    @keyframes adminNameShimmer{
-      0%   { background-position:   0% 0; }
-      100% { background-position: 200% 0; }
-    }
 
     /* Text glow overlay that fades out to reveal base black text */
     .glow-overlay{
@@ -207,7 +203,7 @@
 </head>
 <body>
   <main class="container">
-    <!-- Admin Panel (JS will reveal only on /chatboard/?admin=1) -->
+    <!-- Admin Panel (JS will reveal only on /chatboard/?admin=1 or when logged in) -->
     <section id="adminPanel" class="panel">
       <div class="row">
         <strong>Admin</strong>
@@ -254,11 +250,16 @@
         <input id="file" type="file" accept="image/*"/>
         <span id="fileInfo" class="file-name"></span>
         <button id="btnAttach" class="btn">Attach image</button>
+        <button id="btnAttachVideo" class="btn" style="display:none">Attach video</button>
         <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
           <!-- Admin-only: shown by JS when logged in and not replying -->
           <label id="optNoReply" class="tag" style="display:none;gap:6px;align-items:center;margin-right:0">
             <input type="checkbox" id="sendNoReply">
             No replies
+          </label>
+          <label id="optAutoPin" class="tag" style="display:none;gap:6px;align-items:center;margin-right:0">
+            <input type="checkbox" id="sendAutoPin">
+            Auto pin
           </label>
           <button id="btnSend" class="btn primary">Send</button>
         </div>
@@ -280,6 +281,6 @@
     </section>
   </main>
 
-  <script src="index.js?v=22"></script>
+  <script src="index.js?v=24"></script>
 </body>
 </html>
