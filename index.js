@@ -380,7 +380,7 @@ function setRepliesVisibility(rootWrap, show){
 }
 function renderSafeContent(input, opts = {}){
   const allowLinks = !!opts.allowLinks; const allowEmbeds = !!opts.allowEmbeds; const text = String(input ?? "");
-  const tpl = document.createElement('template'); tpl.innerHTML = text.replace(/\\n/g, '<br>');
+  const tpl = document.createElement('template'); tpl.innerHTML = text.replace(/\n/g, '<br>');
   const wrap = document.createElement('div'); wrap.style.position = 'relative';
   let textSpan = null;
   const flushTextSpan = () => { if (textSpan && textSpan.childNodes.length) wrap.appendChild(textSpan); textSpan = null; };
@@ -453,6 +453,9 @@ function createGlowOverlayOn(targetEl){
   const prev = targetEl.querySelector(':scope > .glow-overlay'); if (prev) prev.remove();
   const txt = targetEl.textContent || ''; if (!txt.trim()) return null;
   const ov = document.createElement('span'); ov.className = 'glow-overlay'; ov.textContent = txt;
+  ov.style.display = 'inline-block';
+  ov.style.width = '100%';
+  ov.style.height = '100%';
   const cs = getComputedStyle(targetEl);
   ov.style.font = cs.font;
   ov.style.lineHeight = cs.lineHeight;
@@ -495,7 +498,7 @@ function maybeAnimateMessage(c, bodyEl){
       void ov.offsetWidth; // reflow to reset keyframes
       ov.style.animation = 'glowSweep 2s ease-in-out forwards';
       // After sweep, fade the overlay to reveal base text (no flash)
-      setTimeout(() => { ov.style.opacity = '0'; }, 2000);
+      setTimeout(() => { requestAnimationFrame(() => { ov.style.opacity = '0'; }); }, 2000);
       const cleanup = () => { if (ov && ov.parentNode) ov.parentNode.removeChild(ov); };
       ov.addEventListener('transitionend', cleanup, { once: true });
       setTimeout(cleanup, 3600);
