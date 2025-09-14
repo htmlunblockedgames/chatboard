@@ -777,7 +777,7 @@ async function sendMessage(){
     }
   }
 
-  const nick = (nickEl.value || "Anonymous").trim().slice(0, 40);
+  const nick = (nickEl.value || "Anonymous").trim().slice(0, 10);
   const payload = {
     event: 'COMMENT_CREATE',
     url: PAGE_URL_PATH,
