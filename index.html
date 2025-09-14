@@ -128,8 +128,8 @@
     }
     .action:hover{background:#f8f8f8}
 
-    /* Replies container */
-    .replies{display:none; margin-top:10px; padding-left:0; display:flex; flex-direction:column; gap:10px}
+    /* Replies container (FIX: no `display:flex` override here) */
+    .replies{display:none; margin-top:10px; padding-left:0; flex-direction:column; gap:10px}
 
     /* Load older */
     #loadMore{
@@ -312,6 +312,6 @@
     </section>
   </main>
 
-  <script src="index.js?v=28"></script>
+ src="index.js?v=28"></script>
 </body>
 </html>
