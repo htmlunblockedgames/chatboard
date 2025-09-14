@@ -21,7 +21,18 @@ function connectWS(){
     ws.onmessage = (e) => {
       if (typeof e.data === 'string') {
         if (e.data === 'pong') return;
-        try { const msg = JSON.parse(e.data); if (msg && msg.type === "refresh") loadLatest(); } catch {}
+        // Always refresh config first, then comments, so global chat/reply locks update in real-time
+        const doRefresh = async () => {
+          try { await refreshAdminStatus(); } catch {}
+          try { await loadLatest(); } catch {}
+        };
+        try {
+          const msg = JSON.parse(e.data);
+          if (msg && msg.type === "refresh") doRefresh();
+        } catch {
+          // Non-JSON payload; still perform refresh
+          doRefresh();
+        }
       }
     };
     ws.onclose = ws.onerror = () => {
