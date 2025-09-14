@@ -383,6 +383,10 @@ function renderSafeContent(input, opts = {}){
     if (node.nodeType === Node.TEXT_NODE) { pushText(node.textContent); return; }
     if (node.nodeType === Node.ELEMENT_NODE) {
       const tag = node.tagName.toLowerCase();
+      if (tag === 'br') {
+        ensureTextSpan().appendChild(document.createElement('br'));
+        return;
+      }
       if (tag === 'img') { 
         flushTextSpan(); 
         const src = node.getAttribute('src') || ''; 
