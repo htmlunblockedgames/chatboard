@@ -1,5 +1,5 @@
 /* Poly Track Chatboard – index.js */
-console.log("chatboard.index.js v22");
+console.log("chatboard.index.js v23");
 
 const WORKER_URL    = "https://twikoo-cloudflare.ertertertet07.workers.dev";
 const PAGE_URL_PATH = "/chatboard/";
@@ -103,6 +103,10 @@ const devAnimStartAt = new Map();
 let allowReplies = true; // global toggle
 let allowPosts = true;   // when false, only admin may post
 
+/* NEW: session-scoped map to detect new replies per root so we can auto-expand */
+let lastChildCounts = new Map();
+let initialLoaded = false;
+
 /* UI helpers */
 limitMbEl.textContent=MAX_FILE_MB;
 limitChars.textContent=MAX_CHARS;
@@ -119,7 +123,6 @@ const setStatus=(t,isError=false)=>{
 function armConfirmButton(btn, label = 'Are you sure?', ms = 3000){
   if (!btn) return false;
   if (btn.dataset.confirm === '1') {
-    // Second click: proceed and reset appearance
     const tid = Number(btn.dataset.confirmTimer || 0);
     if (tid) clearTimeout(tid);
     btn.dataset.confirm = '0';
@@ -128,7 +131,6 @@ function armConfirmButton(btn, label = 'Are you sure?', ms = 3000){
     btn.style.borderColor = '';
     return true;
   }
-  // First click: arm confirmation state
   btn.dataset.confirm = '1';
   if (!btn.dataset.origText) btn.dataset.origText = btn.textContent || '';
   btn.textContent = label;
@@ -157,8 +159,9 @@ function parseRetryAfter(h){
 }
 function authorIsAdmin(c){ return String((c && c.nick) || '') === 'Poly Track Administrator'; }
 
-/* Render-safe content: newlines -> <br>, allow data/https images & http(s) links only */
-function renderSafeContent(input){
+/* Render-safe content: allow images; links only if opts.allowLinks=true (admins) */
+function renderSafeContent(input, opts = {}){
+  const allowLinks = !!opts.allowLinks; // non-admin: false
   const text = String(input ?? "");
   const tpl = document.createElement('template');
   tpl.innerHTML = text.replace(/\n/g, '<br>');
@@ -171,7 +174,7 @@ function renderSafeContent(input){
       if (tag === 'br') return frag.appendChild(document.createElement('br'));
       if (tag === 'img') {
         const src = node.getAttribute('src') || '';
-        if (/^data:image\/|^https?:\/\//i.test(src)) {
+        if (/^data:image\/.+|^https?:\/\//i.test(src)) {
           const img = document.createElement('img');
           img.src = src; img.alt = node.getAttribute('alt') || '';
           img.loading = 'lazy'; img.decoding = 'async';
@@ -181,10 +184,14 @@ function renderSafeContent(input){
       }
       if (tag === 'a') {
         const href = node.getAttribute('href') || '';
-        const a = document.createElement('a');
-        if (/^https?:\/\//i.test(href)) { a.href = href; a.target = '_blank'; a.rel = 'noopener noreferrer nofollow'; }
-        a.textContent = node.textContent || href;
-        return frag.appendChild(a);
+        if (allowLinks && /^https?:\/\//i.test(href)) {
+          const a = document.createElement('a');
+          a.href = href; a.target = '_blank'; a.rel = 'noopener noreferrer nofollow';
+          a.textContent = node.textContent || href;
+          return frag.appendChild(a);
+        }
+        // Non-ops: render link text only
+        return pushText(node.textContent || href);
       }
       return pushText(node.textContent || '');
     }
@@ -499,35 +506,28 @@ function renderAll(){
 }
 
 /* ===== Glow animation helpers (admin only) ===== */
-/** Create an overlay span on the provided body node that mirrors its text and can fade out. */
 function createGlowOverlay(bodyEl){
   if (!bodyEl) return null;
-  // Remove any previous overlay
   const prev = bodyEl.querySelector('.glow-overlay');
   if (prev) prev.remove();
   const txt = bodyEl.textContent || '';
   if (!txt.trim()) return null;
-  // Ensure the body element is a positioning context
   bodyEl.style.position = 'relative';
 
   const ov = document.createElement('span');
   ov.className = 'glow-overlay';
   ov.textContent = txt;
   bodyEl.appendChild(ov);
-  // Start fully visible (opacity 1)
   ov.style.setProperty('--glow-ol-opacity', '1');
   return ov;
 }
 
-/** Play a 2s shimmer, then fade out overlay to 0 opacity over 1.5s and remove. */
 function applyOverlayGlowOnce(bodyEl){
   const ov = createGlowOverlay(bodyEl);
   if (!ov) return;
-  // After 2s, begin fade-out to reveal black text beneath
   const fadeTimer = setTimeout(()=> {
     ov.style.setProperty('--glow-ol-opacity', '0');
   }, 2000);
-  // Cleanup after fade completes
   const cleanupTimer = setTimeout(()=> {
     ov.remove();
   }, 2000 + 1500);
@@ -535,13 +535,12 @@ function applyOverlayGlowOnce(bodyEl){
   ov.dataset.cleanupTimer = String(cleanupTimer);
 }
 
-/** If message is recent, play remaining shimmer then fade; otherwise fade immediately. */
 function applyOverlayGlowRemainder(bodyEl, c){
   const ov = createGlowOverlay(bodyEl);
   if (!ov) return;
   const created = Number(c?.created || Date.now());
   const elapsed = Math.max(0, (Date.now() - created) / 1000);
-  let remain = Math.max(0, 2 - elapsed); // complete a total of 2s shimmer window
+  let remain = Math.max(0, 2 - elapsed);
   if (remain <= 0){
     ov.style.setProperty('--glow-ol-opacity', '0');
   } else {
@@ -586,8 +585,8 @@ function renderMsg(c){
     replyToSpan.textContent = `↪ Replying to ${c.parentNick}`;
     content.appendChild(replyToSpan);
   }
-  const body = renderSafeContent(c.comment || "");
-  // host for overlay glow; base text remains black, overlay provides shimmering highlight
+  // Admin: links allowed. Non-ops: images only (links become plain text).
+  const body = renderSafeContent(c.comment || "", { allowLinks: adminAuthor });
   content.appendChild(body);
 
   if (adminAuthor) {
@@ -663,15 +662,40 @@ function buildReplies(container, root){
   container.appendChild(frag);
 }
 
+/* Helper: current child counts per root (session-only auto-expand) */
+function getRootChildCounts(){
+  const m = new Map();
+  for (const root of state.tops){
+    m.set(root._id || root.id, (root.children || []).length);
+  }
+  return m;
+}
+
 /* Loading */
 async function loadLatest(){
   if (loading) return;
   loading=true;
   try{
+    const prevCounts = initialLoaded ? new Map(lastChildCounts) : null;
+
     const r = await api({ event: 'COMMENT_GET', url: PAGE_URL_PATH, page: 1, pageSize: 100 });
     const comments = r?.data?.comments || [];
     serverCounts = r?.data?.counts || null;
     mergeList(comments);
+
+    // Session-only auto-expand: open roots whose reply count increased
+    if (prevCounts) {
+      const curr = getRootChildCounts();
+      for (const [rid, cnt] of curr.entries()){
+        const before = prevCounts.get(rid) || 0;
+        if (cnt > before) expanded.add(rid);
+      }
+      lastChildCounts = curr;
+    } else {
+      lastChildCounts = getRootChildCounts();
+    }
+    initialLoaded = true;
+
     renderAll();
   }catch(e){
     setStatus(e?.message || 'Failed to load', true);
@@ -691,6 +715,10 @@ async function loadOlder(){
     const prevAll = new Map(state.all);
     const prevTopsLen = state.tops.length;
     mergeList([...(list||[]), ...Array.from(prevAll.values())]);
+
+    // Update counts but don't auto-expand during pagination
+    lastChildCounts = getRootChildCounts();
+
     renderAll();
     if (state.tops.length === prevTopsLen) loadMoreBtn.textContent="No more";
     else { loadMoreBtn.disabled=false; loadMoreBtn.textContent="Load older"; }
@@ -705,9 +733,7 @@ async function loadOlder(){
 /* Compose & send */
 function sanitizeClient(content){
   let s = String(content || "");
-  // collapse 3+ blank lines
   s = s.replace(/\r\n?/g, "\n").replace(/\n{3,}/g, "\n\n");
-  // enforce char limit client-side
   if (s.length > MAX_CHARS) s = s.slice(0, MAX_CHARS);
   return s;
 }
@@ -717,13 +743,11 @@ async function sendMessage(){
   const content = sanitizeClient(raw).trim();
   if (!content) return;
 
-  // respect global posting lock
   if (!isAdmin && !allowPosts) {
     updateSendButtonUI();
     return;
   }
 
-  // Admin-only: whether to send as a "no replies" root message
   const wantNoReply = !!(isAdmin && sendNoReplyEl && sendNoReplyEl.checked && !replyTarget);
 
   const nick = (nickEl.value || "Anonymous").trim().slice(0, 40);
@@ -746,7 +770,6 @@ async function sendMessage(){
       textEl.value = ""; charCount.textContent = "0";
       const newId = r?.data?.id;
 
-      // If admin chose "No replies" and this is a root message, lock it now
       if (wantNoReply && newId) {
         try {
           await api({ event:'COMMENT_TOGGLE_LOCK_FOR_ADMIN', id: newId, url: PAGE_URL_PATH, lock: true });
@@ -871,7 +894,6 @@ messagesEl.addEventListener('click', async (e)=>{
       const c = state.all.get(cid);
       const isPinnedRoot = c && (c.rid || '') === '' && Number(c.top) === 1;
       if (isPinnedRoot) {
-        // First click turns the button red and asks inline; second click proceeds
         if (!armConfirmButton(t, 'Are you sure?')) return;
       }
     }
@@ -889,7 +911,6 @@ messagesEl.addEventListener('click', async (e)=>{
       const isRoot = c && (c.rid || '') === '';
       const currentlyPinned = Number(c?.top || 0) === 1;
       const wantTop = !currentlyPinned;
-      // If currently pinned and we're about to unpin (root only), ask inline
       if (currentlyPinned && !wantTop && isRoot) {
         if (!armConfirmButton(t, 'Are you sure?')) return;
       }
@@ -915,7 +936,6 @@ messagesEl.addEventListener('click', async (e)=>{
     }catch(err){ setStatus(err?.message || 'Lock toggle failed', true); }
     return;
   }
-
 
   if (t.dataset.action === 'pinMoveUp' || t.dataset.action === 'pinMoveDown'){
     const dir = t.dataset.action === 'pinMoveUp' ? -1 : 1;
