@@ -137,8 +137,7 @@
     }
     .action:hover{background:#f8f8f8}
 
-    /* Replies container: indent each thread level. Since replies are nested,
-       this margin accumulates (52px per depth). */
+    /* Replies container */
     .replies{display:none; margin-top:10px; margin-left:52px; padding-left:0; flex-direction:column; gap:10px}
 
     /* Load older */
@@ -188,7 +187,7 @@
     }
     @keyframes avatarSweep{ to { transform: translateX(120%); } }
 
-    /* Admin username – dimmer, indefinite shimmer */
+    /* Admin username – dimmer, indefinite shimmer (uses global --shimmer-x) */
     .nick.admin-glow{
       color: transparent;
       background: linear-gradient(90deg,
@@ -204,7 +203,7 @@
       text-shadow: 0 0 3px rgba(245,196,0,.12), 0 0 6px rgba(245,196,0,.06);
     }
 
-    /* Text glow overlay that fades out to reveal base black text */
+    /* Restored text glow overlay: one sweep, then smooth fade-out (no white flash) */
     .glow-overlay{
       position:absolute;
       inset:0;
@@ -220,20 +219,20 @@
       background-size:200% 100%;
       -webkit-background-clip:text;
       background-clip:text;
-      background-position: var(--shimmer-x, 0%) 0;
+      background-position:-60% 0;
+      animation: glowSweep 2s ease-in-out forwards;
       opacity: var(--glow-ol-opacity, 1);
       transition: opacity 1.5s ease-in-out;
+      will-change: background-position, opacity;
       z-index: 1;
       line-height: inherit;
     }
-
     @keyframes glowSweep {
       0%   { background-position: -60% 0; }
       100% { background-position: 160% 0; }
     }
 
     /* ===== Compact message layout (fits more per page) ===== */
-    /* Moved --inner and --radius overrides into the main :root block above for proper CSS variable usage */
     #messages{ padding:10px var(--inner); gap:8px; }
     .msg{ padding:8px 10px; border-radius:12px; }
     .pin-badge{ top:4px; right:6px; font-size:10px; padding:1px 6px; }
@@ -352,6 +351,6 @@
     </section>
   </main>
 
-<script src="index.js?v=39"></script>
+<script src="index.js?v=40"></script>
 </body>
 </html>
