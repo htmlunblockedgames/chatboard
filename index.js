@@ -434,7 +434,8 @@ function renderAll(){
     const node = renderMsg(c);
 
     const count = c.children?.length || 0;
-    if (count > 0 && allowReplies) {
+    // Always allow viewing replies (even if replying is disabled globally)
+    if (count > 0) {
       const actions = node.querySelector('.actions');
       if (actions) {
         const toggleBtn = document.createElement('span');
@@ -825,6 +826,15 @@ messagesEl.addEventListener('click', async (e)=>{
     return;
   }
 
+  // Everyone (not just admin) can expand/collapse replies
+  if (t.dataset.action === 'toggleReplies'){
+    const rootId = t.dataset.parent;
+    if (!rootId) return;
+    if (expanded.has(rootId)) expanded.delete(rootId); else expanded.add(rootId);
+    renderAll();
+    return;
+  }
+
   if (!isAdmin) return; // below are admin-only
 
   if (t.dataset.action === 'adminDel'){
@@ -885,13 +895,6 @@ messagesEl.addEventListener('click', async (e)=>{
     return;
   }
 
-  if (t.dataset.action === 'toggleReplies'){
-    const rootId = t.dataset.parent;
-    if (!rootId) return;
-    if (expanded.has(rootId)) expanded.delete(rootId); else expanded.add(rootId);
-    renderAll();
-    return;
-  }
 
   if (t.dataset.action === 'pinMoveUp' || t.dataset.action === 'pinMoveDown'){
     const dir = t.dataset.action === 'pinMoveUp' ? -1 : 1;
