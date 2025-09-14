@@ -1,5 +1,5 @@
 /* Poly Track Chatboard – index.js */
-console.log("chatboard.index.js v27");
+console.log("chatboard.index.js v28");
 
 const WORKER_URL    = "https://twikoo-cloudflare.ertertertet07.workers.dev";
 const PAGE_URL_PATH = "/chatboard/";
@@ -39,7 +39,7 @@ function connectWS(){
         if (e.data === 'pong') return;
         const doRefresh = async () => {
           try { await refreshAdminStatus(); } catch {}
-          try { await loadLatest(true); } catch {}   // <-- pass isRealtime=true for WS pushes
+          try { await loadLatest(true); } catch {}
         };
         try {
           const msg = JSON.parse(e.data);
@@ -78,6 +78,10 @@ const togglePostsEl=$("togglePosts");
 /* Admin-only composer options */
 const optNoReplyEl=$("optNoReply"), sendNoReplyEl=$("sendNoReply"),
       optAutoPinEl=$("optAutoPin"), sendAutoPinEl=$("sendAutoPin");
+
+/* Inline embed UI refs */
+const embedBox=$("embedBox"), embedModeEl=$("embedMode"),
+      embedUrlEl=$("embedUrl"), embedHtmlEl=$("embedHtml"), btnEmbedInsert=$("btnEmbedInsert");
 
 const limitMbEl=$("limitMb"), limitChars=$("limitChars"), limitChars2=$("limitChars2"), charCount=$("charCount");
 const replyTo=$("replyTo"), replyName=$("replyName"), replyCancel=$("replyCancel");
@@ -157,7 +161,7 @@ function parseRetryAfter(h){
 }
 function authorIsAdmin(c){ return String((c && c.nick) || '') === 'Poly Track Administrator'; }
 
-/* Build actions toolbar (reused for fresh & existing nodes) */
+/* Build actions toolbar */
 function buildActionsFor(c){
   const actions = document.createElement("div");
   actions.className = "actions";
@@ -167,7 +171,6 @@ function buildActionsFor(c){
   const rootForLock = state.all.get(rootIdForLock);
   const threadLocked = !!(rootForLock && rootForLock.locked);
 
-  // Reply (global replies or admin, and thread not locked)
   if ((allowReplies || isAdmin) && !threadLocked) {
     const replyBtn = document.createElement("span");
     replyBtn.className = "action";
@@ -176,7 +179,6 @@ function buildActionsFor(c){
     actions.appendChild(replyBtn);
   }
 
-  // Show/Close replies toggle (roots with children)
   const count = c.children?.length || 0;
   if ((c.rid || "") === "" && count > 0) {
     const toggleBtn = document.createElement("span");
@@ -189,7 +191,6 @@ function buildActionsFor(c){
     actions.appendChild(toggleBtn);
   }
 
-  // Admin controls
   if (isAdmin) {
     const delBtn = document.createElement("span");
     delBtn.className = "action";
@@ -218,9 +219,7 @@ function buildActionsFor(c){
   return actions;
 }
 
-/* Render-safe content:
-   - Everyone: images
-   - Links & embeds: admin only (includes general iframes and srcdoc) */
+/* Render-safe content (images allowed for all, embeds/links admin-only) */
 function renderSafeContent(input, opts = {}){
   const allowLinks = !!opts.allowLinks;
   const allowEmbeds = !!opts.allowEmbeds;
@@ -265,11 +264,8 @@ function renderSafeContent(input, opts = {}){
         const src = node.getAttribute('src') || '';
         if (hasSrcdoc || isHttp(src)) {
           const f = document.createElement('iframe');
-          if (hasSrcdoc) {
-            f.setAttribute('srcdoc', node.getAttribute('srcdoc') || '');
-          } else {
-            f.src = src;
-          }
+          if (hasSrcdoc) f.setAttribute('srcdoc', node.getAttribute('srcdoc') || '');
+          else f.src = src;
           f.loading = 'lazy';
           f.referrerPolicy = 'no-referrer';
           f.title = node.getAttribute('title') || 'Embedded content';
@@ -294,7 +290,11 @@ function renderSafeContent(input, opts = {}){
       return pushText(node.textContent || '');
     }
   });
-  const wrap = document.createElement('div'); wrap.appendChild(frag); return wrap;
+
+  const wrap = document.createElement('div');
+  wrap.style.position = 'relative';        // <-- ensure glow overlay aligns with this body only
+  wrap.appendChild(frag);
+  return wrap;
 }
 
 /* API */
@@ -425,8 +425,10 @@ function updateAdminUI(){
     optAutoPinEl.style.display = show ? 'inline-flex' : 'none';
     if (sendAutoPinEl) sendAutoPinEl.disabled = !show;
   }
-  if (btnEmbed) {
-    btnEmbed.style.display = isAdmin ? 'inline-flex' : 'none';
+
+  // Inline embed UI
+  if (embedBox) {
+    embedBox.style.display = isAdmin ? "flex" : "none";
   }
 
   if (!allowReplies) {
@@ -474,24 +476,16 @@ function bindAdminTogglesOnce(){
     toggleRepliesEl.addEventListener('change', async (e) => {
       if (!isAdmin) { e.preventDefault(); updateAdminUI(); return; }
       const want = !!e.target.checked;
-
-      // Optimistic real-time
-      allowReplies = want;
-      updateAdminUI();
-      renderAllIncremental();
-
+      allowReplies = want; updateAdminUI(); renderAllIncremental();
       e.target.disabled = true;
       try{
         const r = await api({ event: 'SET_CONFIG_FOR_ADMIN', set: { allowReplies: want } });
         allowReplies = String(r?.config?.ALLOW_REPLIES ?? 'true').toLowerCase() !== 'false';
       }catch(err){
         setStatus(err?.message || 'Failed to update replies setting', true);
-        allowReplies = !want;
-        e.target.checked = !!allowReplies;
+        allowReplies = !want; e.target.checked = !!allowReplies;
       }finally{
-        e.target.disabled = false;
-        updateAdminUI();
-        renderAllIncremental();
+        e.target.disabled = false; updateAdminUI(); renderAllIncremental();
       }
     });
   }
@@ -500,80 +494,22 @@ function bindAdminTogglesOnce(){
     togglePostsEl.addEventListener('change', async (e) => {
       if (!isAdmin) { e.preventDefault(); updateAdminUI(); return; }
       const onlyAdmin = !!e.target.checked; // checked = only admin can post
-
-      // Optimistic
-      allowPosts = !onlyAdmin;
-      updateAdminUI();
-      renderAllIncremental();
-
+      allowPosts = !onlyAdmin; updateAdminUI(); renderAllIncremental();
       e.target.disabled = true;
       try{
         const r = await api({ event: 'SET_CONFIG_FOR_ADMIN', set: { allowPosts: !onlyAdmin } });
         allowPosts = String(r?.config?.ALLOW_POSTS ?? 'true').toLowerCase() !== 'false';
       }catch(err){
         setStatus(err?.message || 'Failed to update posting setting', true);
-        allowPosts = !allowPosts;
-        e.target.checked = !allowPosts;
+        allowPosts = !allowPosts; e.target.checked = !allowPosts;
       }finally{
-        e.target.disabled = false;
-        updateAdminUI();
-        renderAllIncremental();
+        e.target.disabled = false; updateAdminUI(); renderAllIncremental();
       }
     });
   }
 }
 
-/* Merge, compute nesting, preserve server root order; track reply counts */
-function mergeList(list){
-  const temp = new Map();
-  const pushItem = (src) => {
-    const id = src._id || src.id; if (!id) return;
-    temp.set(id, {
-      ...src,
-      _id: id, id,
-      pid: src.pid || "", rid: src.rid || "",
-      created: src.created || Date.now(),
-      nick: src.nick || "Anonymous",
-      avatar: src.avatar || "",
-      comment: src.comment || src.content || "",
-      depth: 0, parentNick: null, children: [],
-      top: Number(src.top ? 1 : 0),
-      locked: !!src.locked
-    });
-  };
-  (Array.isArray(list) ? list : []).forEach(pushItem);
-
-  // derive depth/parent + children
-  for (const obj of temp.values()){
-    if ((obj.rid || "") === "") { obj.depth = 0; obj.parentNick = null; continue; }
-    let depth = 1, p = temp.get(obj.pid), seen=new Set([obj._id]);
-    while (p && (p.rid || "") !== "") { if (seen.has(p._id)) break; seen.add(p._id); depth++; p = temp.get(p.pid); }
-    obj.depth = depth; obj.parentNick = (temp.get(obj.pid)?.nick) || obj.ruser || null;
-    let root = obj; while (root && (root.rid || "") !== "") root = temp.get(root.pid); if (root) obj.rid = root._id;
-  }
-  for (const o of temp.values()) o.children = [];
-  for (const o of temp.values()){
-    if ((o.rid || "") !== "") { const root=temp.get(o.rid); if (root) root.children.push(o); }
-  }
-  for (const root of temp.values()){ if (root.children?.length) root.children.sort((a,b)=>(a.created||0)-(b.created||0)); }
-
-  state.all = temp;
-
-  // Preserve server-provided root order
-  const rootsInOrder = [];
-  const seen = new Set();
-  for (const item of (Array.isArray(list)?list:[])) {
-    const id = item._id || item.id;
-    const obj = temp.get(id);
-    if (obj && (obj.rid || "") === "" && !seen.has(id)) { rootsInOrder.push(obj); seen.add(id); }
-  }
-  if (!rootsInOrder.length) {
-    for (const v of temp.values()) if ((v.rid || "") === "") rootsInOrder.push(v);
-  }
-  state.tops = rootsInOrder;
-  state.rootOrder = rootsInOrder.map(x => x._id);
-  earliestMainCreated = state.tops.length ? Math.min(...state.tops.map(x=>x.created||Date.now())) : null;
-}
+/* Merge & render helpers... (unchanged below) */
 
 /* ===== Glow animation helpers (admin only) ===== */
 function createGlowOverlay(bodyEl){
@@ -582,8 +518,6 @@ function createGlowOverlay(bodyEl){
   if (prev) prev.remove();
   const txt = bodyEl.textContent || '';
   if (!txt.trim()) return null;
-  bodyEl.style.position = 'relative';
-
   const ov = document.createElement('span');
   ov.className = 'glow-overlay';
   ov.textContent = txt;
@@ -613,7 +547,56 @@ function applyOverlayGlowRemainder(bodyEl, c){
   setTimeout(()=> { ov.remove(); }, Math.round(remain * 1000) + 1500);
 }
 
-/* Render one message */
+/* mergeList, renderMsg, buildReplies, renderAllIncremental, loadLatest, loadOlder — unchanged except for renderSafeContent positioning fix */
+function mergeList(list){
+  const temp = new Map();
+  const pushItem = (src) => {
+    const id = src._id || src.id; if (!id) return;
+    temp.set(id, {
+      ...src,
+      _id: id, id,
+      pid: src.pid || "", rid: src.rid || "",
+      created: src.created || Date.now(),
+      nick: src.nick || "Anonymous",
+      avatar: src.avatar || "",
+      comment: src.comment || src.content || "",
+      depth: 0, parentNick: null, children: [],
+      top: Number(src.top ? 1 : 0),
+      locked: !!src.locked
+    });
+  };
+  (Array.isArray(list) ? list : []).forEach(pushItem);
+
+  for (const obj of temp.values()){
+    if ((obj.rid || "") === "") { obj.depth = 0; obj.parentNick = null; continue; }
+    let depth = 1, p = temp.get(obj.pid), seen=new Set([obj._id]);
+    while (p && (p.rid || "") !== "") { if (seen.has(p._id)) break; seen.add(p._id); depth++; p = temp.get(p.pid); }
+    obj.depth = depth; obj.parentNick = (temp.get(obj.pid)?.nick) || obj.ruser || null;
+    let root = obj; while (root && (root.rid || "") !== "") root = temp.get(root.pid); if (root) obj.rid = root._id;
+  }
+  for (const o of temp.values()) o.children = [];
+  for (const o of temp.values()){
+    if ((o.rid || "") !== "") { const root=temp.get(o.rid); if (root) root.children.push(o); }
+  }
+  for (const root of temp.values()){ if (root.children?.length) root.children.sort((a,b)=>(a.created||0)-(b.created||0)); }
+
+  state.all = temp;
+
+  const rootsInOrder = [];
+  const seen = new Set();
+  for (const item of (Array.isArray(list)?list:[])) {
+    const id = item._id || item.id;
+    const obj = temp.get(id);
+    if (obj && (obj.rid || "") === "" && !seen.has(id)) { rootsInOrder.push(obj); seen.add(id); }
+  }
+  if (!rootsInOrder.length) {
+    for (const v of temp.values()) if ((v.rid || "") === "") rootsInOrder.push(v);
+  }
+  state.tops = rootsInOrder;
+  state.rootOrder = rootsInOrder.map(x => x._id);
+  earliestMainCreated = state.tops.length ? Math.min(...state.tops.map(x=>x.created||Date.now())) : null;
+}
+
 function renderMsg(c){
   const cid = c._id || c.id;
   const wrap=document.createElement("div"); wrap.className="msg"; wrap.dataset.cid=cid;
@@ -686,7 +669,6 @@ function buildReplies(container, root){
   container.appendChild(frag);
 }
 
-/* ===== Incremental render to avoid killing in-flight animations ===== */
 function renderAllIncremental(){
   const existing = new Map();
   messagesEl.querySelectorAll(':scope > .msg').forEach(n => existing.set(n.dataset.cid, n));
@@ -696,7 +678,6 @@ function renderAllIncremental(){
     if (!node) {
       node = renderMsg(c);
     } else {
-      // Rebuild actions completely (updates reply visibility, lock/unlock, pin labels)
       const oldActions = node.querySelector(".actions");
       if (oldActions) {
         const fresh = buildActionsFor(c);
@@ -706,7 +687,6 @@ function renderAllIncremental(){
         (node.querySelector(".bubble") || node).appendChild(fresh);
       }
 
-      // Replies container
       let cont = node.querySelector('#replies-'+c._id);
       if (!cont) {
         cont = document.createElement('div');
@@ -738,7 +718,6 @@ function renderAllIncremental(){
   updateAdminUI();
 }
 
-/* Loading */
 async function loadLatest(isRealtime = false){
   if (loading) return;
   loading=true;
@@ -748,7 +727,6 @@ async function loadLatest(isRealtime = false){
     serverCounts = r?.data?.counts || null;
     mergeList(comments);
 
-    // Auto-open only for in-session, real-time updates (not on initial reloads)
     const shouldAutoOpen = !!isRealtime && prevChildCounts.size > 0;
     if (shouldAutoOpen) {
       for (const root of state.tops) {
@@ -759,7 +737,6 @@ async function loadLatest(isRealtime = false){
       }
     }
 
-    // Always refresh the snapshot
     for (const root of state.tops) {
       const id = root._id || root.id;
       prevChildCounts.set(id, root.children?.length || 0);
@@ -785,7 +762,6 @@ async function loadOlder(){
     const prevTopsLen = state.tops.length;
     mergeList([...(list||[]), ...Array.from(prevAll.values())]);
 
-    // Refresh reply-count snapshot (no auto-open on older loads)
     for (const root of state.tops) {
       const id = root._id || root.id;
       prevChildCounts.set(id, root.children?.length || 0);
@@ -805,7 +781,7 @@ async function loadOlder(){
 /* Compose & send */
 function sanitizeClient(content){
   let s = String(content || "");
-  s = s.replace(/\r\n?/g, "\n").replace(/\n{3,}/g, "\n\n"); // collapse blank lines
+  s = s.replace(/\r\n?/g, "\n").replace(/\n{3,}/g, "\n\n");
   if (s.length > MAX_CHARS) s = s.slice(0, MAX_CHARS);
   return s;
 }
@@ -850,7 +826,6 @@ async function sendMessage(){
       textEl.value = ""; charCount.textContent = "0";
       const newId = r?.data?.id;
 
-      // If admin chose "No replies" and this is a root message, lock it now
       if (wantNoReply && newId) {
         try {
           await api({ event:'COMMENT_TOGGLE_LOCK_FOR_ADMIN', id: newId, url: PAGE_URL_PATH, lock: true });
@@ -858,7 +833,6 @@ async function sendMessage(){
           setStatus(e?.message || 'Failed to lock replies for this message', true);
         }
       }
-      // Auto-pin newly created root (admin only)
       if (wantAutoPin && newId && !payload.pid && !payload.rid) {
         try {
           const pr = await api({ event:'COMMENT_SET_FOR_ADMIN', id: newId, url: PAGE_URL_PATH, set: { top: true } });
@@ -906,36 +880,34 @@ async function attachImage(){
   }
 }
 
-/* General-purpose embed (admin only) */
+/* Inline embed (admin only) */
 async function attachEmbed(){
   if (!isAdmin) { setStatus('Only admin can embed content', true); return; }
-  const mode = (prompt('Embed mode:\n- Type \"url\" to embed a website by URL\n- Type \"html\" to embed raw HTML (sandboxed)') || '').trim().toLowerCase();
-  if (!mode) return;
-
+  const mode = (embedModeEl?.value || 'url').toLowerCase();
   if (mode === 'url') {
-    const url = (prompt('Enter website URL (https://...)') || '').trim();
+    const url = (embedUrlEl?.value || '').trim();
     if (!/^https?:\/\//i.test(url)) { setStatus('Please enter a valid http(s) URL', true); return; }
-    const html = `\n<iframe src=\"${url}\" width=\"560\" height=\"315\" title=\"Embedded site\" sandbox=\"allow-scripts allow-same-origin\" loading=\"lazy\" referrerpolicy=\"no-referrer\"></iframe>\n`;
+    const html = `\n<iframe src="${url}" width="560" height="315" title="Embedded site" sandbox="allow-scripts allow-same-origin" loading="lazy" referrerpolicy="no-referrer"></iframe>\n`;
     insertAtCursor(textEl, html);
     setStatus('Embed added!');
+    if (embedUrlEl) embedUrlEl.value = '';
     return;
   }
-
   if (mode === 'html') {
-    const raw = prompt('Paste raw HTML to embed (will be sandboxed; scripts allowed inside the frame):') || '';
-    if (!raw.trim()) return;
+    const raw = embedHtmlEl?.value || '';
+    if (!raw.trim()) { setStatus('Paste some HTML to embed', true); return; }
     const esc = raw
       .replace(/&/g,'&amp;')
       .replace(/</g,'&lt;')
       .replace(/>/g,'&gt;')
       .replace(/\"/g,'&quot;');
-    const html = `\n<iframe srcdoc=\"${esc}\" width=\"560\" height=\"315\" title=\"Embedded HTML\" sandbox=\"allow-scripts allow-same-origin\" loading=\"lazy\" referrerpolicy=\"no-referrer\"></iframe>\n`;
+    const html = `\n<iframe srcdoc="${esc}" width="560" height="315" title="Embedded HTML" sandbox="allow-scripts allow-same-origin" loading="lazy" referrerpolicy="no-referrer"></iframe>\n`;
     insertAtCursor(textEl, html);
     setStatus('Embed added!');
+    if (embedHtmlEl) embedHtmlEl.value = '';
     return;
   }
-
-  setStatus('Type \"url\" or \"html\".', true);
+  setStatus('Choose a mode for embed', true);
 }
 
 /* Events */
@@ -951,6 +923,20 @@ fileEl.addEventListener('change', ()=>{
 });
 btnAttach.addEventListener('click', attachImage);
 if (btnEmbed) btnEmbed.addEventListener('click', attachEmbed);
+
+/* Inline embed UI wiring */
+if (embedModeEl && embedUrlEl && embedHtmlEl) {
+  embedModeEl.addEventListener('change', ()=>{
+    const m = (embedModeEl.value || 'url').toLowerCase();
+    if (m === 'url') { embedUrlEl.style.display = ''; embedHtmlEl.style.display = 'none'; }
+    else { embedUrlEl.style.display = 'none'; embedHtmlEl.style.display = ''; }
+  });
+  (function(){ const m = (embedModeEl.value || 'url').toLowerCase();
+    if (m === 'url') { embedUrlEl.style.display = ''; embedHtmlEl.style.display = 'none'; }
+    else { embedUrlEl.style.display = 'none'; embedHtmlEl.style.display = ''; }
+  })();
+}
+if (btnEmbedInsert) btnEmbedInsert.addEventListener('click', attachEmbed);
 
 replyCancel.addEventListener('click', ()=>{
   replyTarget=null;
@@ -969,7 +955,7 @@ btnAdminLogin.addEventListener('click', async ()=>{
       isAdmin = true;
       adminPass.value = "";
       await refreshAdminStatus();
-      await loadLatest(false);   // reload — not real-time
+      await loadLatest(false);
     } else {
       setStatus(r?.message || 'Login failed', true);
     }
@@ -983,7 +969,7 @@ btnAdminLogout.addEventListener('click', async ()=>{
   localStorage.removeItem('twikoo_is_admin');
   isAdmin = false;
   await refreshAdminStatus();
-  await loadLatest(false);       // reload — not real-time
+  await loadLatest(false);
 });
 
 loadMoreBtn.addEventListener('click', loadOlder);
@@ -1004,7 +990,6 @@ messagesEl.addEventListener('click', async (e)=>{
     return;
   }
 
-  // Everyone can expand/collapse replies
   if (t.dataset.action === 'toggleReplies'){
     const rootId = t.dataset.parent;
     if (!rootId) return;
@@ -1013,7 +998,7 @@ messagesEl.addEventListener('click', async (e)=>{
     return;
   }
 
-  if (!isAdmin) return; // below are admin-only
+  if (!isAdmin) return;
 
   if (t.dataset.action === 'adminDel'){
     {
@@ -1068,7 +1053,7 @@ messagesEl.addEventListener('click', async (e)=>{
 (async function init(){
   await checkConnection();
   await refreshAdminStatus();
-  await loadLatest(false);   // initial load — not real-time
+  await loadLatest(false);
   connectWS();
   updateSendButtonUI();
 })();

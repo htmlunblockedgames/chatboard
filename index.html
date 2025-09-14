@@ -245,12 +245,30 @@
         <textarea id="text" placeholder="Type your message… You can also attach an image."></textarea>
       </div>
 
+      <!-- Inline embed UI (admin only; JS toggles visibility) -->
+      <div id="embedBox" class="row" style="display:none;flex-direction:column;align-items:stretch;gap:8px">
+        <div class="row row-slim" style="gap:8px">
+          <label class="tag" style="display:inline-flex;gap:6px;align-items:center">
+            Mode
+            <select id="embedMode">
+              <option value="url">Website URL</option>
+              <option value="html">Raw HTML</option>
+            </select>
+          </label>
+        </div>
+        <input id="embedUrl" type="text" placeholder="https://example.com (embedded in sandboxed iframe)"/>
+        <textarea id="embedHtml" placeholder="&lt;div&gt;Custom HTML&lt;/div&gt;" style="display:none;min-height:120px"></textarea>
+        <div class="row row-slim" style="gap:8px">
+          <button id="btnEmbedInsert" class="btn">Insert embed</button>
+          <span class="limits">Embeds are sandboxed (no referrer; allow-scripts + same-origin).</span>
+        </div>
+      </div>
+
       <div class="row row-slim">
         <label for="file" class="btn file-btn" id="btnChoose">Choose image</label>
         <input id="file" type="file" accept="image/*"/>
         <span id="fileInfo" class="file-name"></span>
         <button id="btnAttach" class="btn">Attach image</button>
-        <button id="btnEmbed" class="btn" style="display:none">Embed</button>
         <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
           <!-- Admin-only: shown by JS when logged in and not replying -->
           <label id="optNoReply" class="tag" style="display:none;gap:6px;align-items:center;margin-right:0">
@@ -281,6 +299,6 @@
     </section>
   </main>
 
-  <script src="index.js?v=25"></script>
+  <script src="index.js?v=28"></script>
 </body>
 </html>
