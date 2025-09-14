@@ -259,7 +259,7 @@ function updateAdminUI(){
 
   if (optNoReplyEl){ const show = !!isAdmin && !replyTarget; optNoReplyEl.style.display = show ? 'inline-flex' : 'none'; if (sendNoReplyEl) sendNoReplyEl.disabled = !show || !allowReplies; }
   if (optAutoPinEl){ const show = !!isAdmin && !replyTarget; optAutoPinEl.style.display = show ? 'inline-flex' : 'none'; if (sendAutoPinEl) sendAutoPinEl.disabled = !show; }
-  if (embedBox) embedBox.style.display = isAdmin ? 'flex' : 'none'; // <— add this
+  if (embedBox) embedBox.style.display = isAdmin ? 'flex' : 'none';
 
   if (!allowReplies && !isAdmin) { replyTarget = null; if (replyTo) replyTo.style.display = 'none'; }
 
@@ -289,7 +289,7 @@ btnAttach && !btnAttach.dataset.boundClick && (btnAttach.dataset.boundClick='1',
   const f = fileEl && fileEl.files && fileEl.files[0]; if (!f){ setStatus('Choose an image first'); return; }
   const sizeMB = f.size/(1024*1024); if (sizeMB > MAX_FILE_MB){ setStatus(`Image too large (limit ${MAX_FILE_MB}MB)`, true); return; }
   // Non-admin: only 1 <img> allowed in the message (client-side)
-  const existingImgs = (textEl.value.match(/&lt;img\b[^&gt;]*&gt;|<img\b[^>]*>/gi) || []).length;
+  const existingImgs = (textEl.value.match(/&lt;img\\b[^&gt;]*&gt;|<img\\b[^>]*>/gi) || []).length;
   if (!isAdmin && existingImgs >= 1) { setStatus('Only one image per message allowed', true); return; }
   setStatus('Uploading image…');
   try{
@@ -298,8 +298,8 @@ btnAttach && !btnAttach.dataset.boundClick && (btnAttach.dataset.boundClick='1',
     const resp = await api({ event:'UPLOAD_IMAGE', photo:String(dataURL) });
     if (resp && resp.code===0 && resp.data && resp.data.url){
       const url = resp.data.url; const prefix = textEl.value.trim().length ? '\n' : '';
-      textEl.value = (textEl.value + `${prefix}<img src="${url}">`).trim(); updateCharCount(); setStatus('Image attached');
-      fileEl.value=''; fileInfo && (fileInfo.textContent='');
+      textEl.value = (textEl.value + `${prefix}<img src=\"${url}\">`).trim(); updateCharCount(); setStatus('Image attached');
+      fileEl.value=''; if (fileInfo) fileInfo.textContent='';
     } else { setStatus(resp && resp.message ? resp.message : 'Upload failed', true); }
   }catch(e){ setStatus(e && e.message ? e.message : 'Upload failed', true); }
 }));
@@ -319,14 +319,14 @@ if (btnEmbedInsert && !btnEmbedInsert.dataset.bound){
     const mode = embedModeEl.value;
     if (mode === 'url'){
       const u = (embedUrlEl.value||'').trim();
-      if (!/^https?:\/\//i.test(u)) { setStatus('Enter a valid URL (https://…) for embed', true); return; }
+      if (!/^https?:\/\/.*/i.test(u)) { setStatus('Enter a valid URL (https://…) for embed', true); return; }
       const iframe = `<iframe src="${u}" sandbox="allow-scripts allow-same-origin" referrerpolicy="no-referrer" width="560" height="315" title="Embedded"></iframe>`;
-      textEl.value = (textEl.value.trim() ? (textEl.value+"\n") : "") + iframe;
+      textEl.value = (textEl.value.trim() ? (textEl.value+'\n') : '') + iframe;
     }else{
       const html = embedHtmlEl.value || '';
       const srcdoc = html.replace(/<\/script>/gi,'</scr'+'ipt>');
       const iframe = `<iframe srcdoc="${srcdoc.replace(/"/g,'&quot;')}" sandbox="allow-scripts allow-same-origin" referrerpolicy="no-referrer" width="560" height="315" title="Embedded"></iframe>`;
-      textEl.value = (textEl.value.trim() ? (textEl.value+"\n") : "") + iframe;
+      textEl.value = (textEl.value.trim() ? (textEl.value+'\n') : '') + iframe;
     }
     updateCharCount();
     setStatus('Embed inserted (sandboxed)');
@@ -360,7 +360,7 @@ function bindAdminTogglesOnce(){
 /* ===== Content rendering ===== */
 function renderSafeContent(input, opts = {}){
   const allowLinks = !!opts.allowLinks; const allowEmbeds = !!opts.allowEmbeds; const text = String(input ?? "");
-  const tpl = document.createElement('template'); tpl.innerHTML = text.replace(/\n/g, '<br>');
+  const tpl = document.createElement('template'); tpl.innerHTML = text.replace(/\\n/g, '<br>');
   const wrap = document.createElement('div'); wrap.style.position = 'relative';
   let textSpan = null;
   const flushTextSpan = () => { if (textSpan && textSpan.childNodes.length) wrap.appendChild(textSpan); textSpan = null; };
@@ -377,13 +377,28 @@ function renderSafeContent(input, opts = {}){
     return textSpan;
   };
   const pushText = (s) => { ensureTextSpan().appendChild(document.createTextNode(s || '')); };
-  const isHttp = (u)=> /^https?:\/\//i.test(u||''); const isDirectVideo = (u)=> /\.(mp4|webm|ogg)(\?.*)?$/i.test(u||'');
+  const isHttp = (u)=> /^https?:\/\/.*/i.test(u||''); 
+  const isDirectVideo = (u)=> /\.(mp4|webm|ogg)(\?.*)?$/i.test(u||'');
   Array.from(tpl.content.childNodes).forEach(node => {
     if (node.nodeType === Node.TEXT_NODE) { pushText(node.textContent); return; }
     if (node.nodeType === Node.ELEMENT_NODE) {
       const tag = node.tagName.toLowerCase();
-      if (tag === 'br') { ensureTextSpan().appendChild(document.createElement('br')); return; }
-      if (tag === 'img') { flushTextSpan(); const src = node.getAttribute('src') || ''; if (/^data:image\/.+|^https?:\/\//i.test(src)) { const img = document.createElement('img'); img.src = src; img.alt = node.getAttribute('alt') || ''; img.loading='lazy'; img.decoding='async'; wrap.appendChild(img); } else { pushText('[blocked image]'); flushTextSpan(); } return; }
+      if (tag === 'img') { 
+        flushTextSpan(); 
+        const src = node.getAttribute('src') || ''; 
+        if (/^data:image\/.+|^https?:\/\/.*/i.test(src)) { 
+          const img = document.createElement('img'); 
+          img.src = src; 
+          img.alt = node.getAttribute('alt') || ''; 
+          img.loading='lazy'; 
+          img.decoding='async'; 
+          wrap.appendChild(img); 
+        } else { 
+          pushText('[blocked image]'); 
+          flushTextSpan(); 
+        } 
+        return; 
+      }
       if (tag === 'a') { const href = node.getAttribute('href') || ''; const txt = node.textContent || href; if (allowLinks && isHttp(href)) { const a = document.createElement('a'); a.href = href; a.target = '_blank'; a.rel = 'noopener noreferrer nofollow'; a.textContent = txt; flushTextSpan(); wrap.appendChild(a); } else { pushText(txt); } return; }
       if (allowEmbeds && tag === 'iframe') { flushTextSpan(); const hasSrcdoc = node.hasAttribute('srcdoc'); const src = node.getAttribute('src') || ''; if (hasSrcdoc || isHttp(src)) { const f = document.createElement('iframe'); if (hasSrcdoc) f.setAttribute('srcdoc', node.getAttribute('srcdoc') || ''); else f.src = src; f.loading='lazy'; f.referrerPolicy='no-referrer'; f.title=node.getAttribute('title')||'Embedded content'; f.width=node.getAttribute('width')||'560'; f.height=node.getAttribute('height')||'315'; f.setAttribute('sandbox','allow-scripts allow-same-origin'); wrap.appendChild(f); } else { pushText('[blocked iframe]'); flushTextSpan(); } return; }
       if (allowEmbeds && tag === 'video') { flushTextSpan(); const src = node.getAttribute('src') || ''; if (isHttp(src) && isDirectVideo(src)) { const v = document.createElement('video'); v.src=src; v.controls=true; v.preload='metadata'; v.style.maxWidth='480px'; wrap.appendChild(v); } else { pushText('[blocked video]'); flushTextSpan(); } return; }
@@ -472,10 +487,11 @@ function renderOne(c){
 
   // content
   const content = document.createElement('div'); content.className='content';
-  const body = renderSafeContent(c.content, { allowLinks:true, allowEmbeds:isAdmin }); // only admin can embed
+  // CHANGE: allow embeds if the author is admin (so everyone sees them)
+  const body = renderSafeContent(c.content, { allowLinks:true, allowEmbeds: authorIsAdmin(c) });
   content.appendChild(body);
 
-  // replying-to line (if this is a reply). Append the line first, then content.
+  // replying-to line (if this is a reply)
   if (c.pid){
     const parent = state.all.get(c.pid);
     if (parent){
@@ -504,7 +520,7 @@ function renderOne(c){
       // open the root thread immediately for this session
       const rootId = c.rid || c.id;
       expanded.add(rootId);
-      const rootMsg = messagesEl.querySelector(`.msg[data-id="${rootId}"]`);
+      const rootMsg = messagesEl.querySelector(`.msg[data-id=\"${rootId}\"]`);
       if (rootMsg){
         const wrap = rootMsg.querySelector(':scope > .bubble > .replies');
         if (wrap) wrap.style.display = 'flex';
@@ -562,52 +578,51 @@ function renderOne(c){
     actions.appendChild(del);
   }
 
-bubble.appendChild(actions);
-msg.appendChild(bubble);
+  bubble.appendChild(actions);
+  msg.appendChild(bubble);
 
-// replies container (must be inside the bubble so it stacks below content)
-const repliesWrap = document.createElement('div');
-repliesWrap.className = 'replies';
-if (expanded.has(c.id)) repliesWrap.style.display = 'flex';
-bubble.appendChild(repliesWrap);
+  // replies container
+  const repliesWrap = document.createElement('div');
+  repliesWrap.className = 'replies';
+  if (expanded.has(c.id)) repliesWrap.style.display = 'flex';
+  bubble.appendChild(repliesWrap);
 
-// Root-level show/hide replies toggle (per-session)
-if (!c.rid) {
-  const rootId = c.id;
-  const computeCount = () => (state.childrenByRoot.get(rootId) || []).length; // counts all replies under this root
-  const n = computeCount();
-  if (n > 0) {
-    const btnToggle = document.createElement('span');
-    btnToggle.className = 'action';
-    const setLabel = () => {
-      btnToggle.textContent = expanded.has(rootId)
-        ? 'Hide replies'
-        : `Show replies (${n})`;
-    };
-    setLabel();
-    btnToggle.addEventListener('click', () => {
-      if (expanded.has(rootId)) {
-        expanded.delete(rootId);
-        repliesWrap.style.display = 'none';
-      } else {
-        expanded.add(rootId);
-        repliesWrap.style.display = 'flex';
-      }
+  // Root-level show/hide replies toggle (per-session)
+  if (!c.rid) {
+    const rootId = c.id;
+    const computeCount = () => (state.childrenByRoot.get(rootId) || []).length;
+    const n = computeCount();
+    if (n > 0) {
+      const btnToggle = document.createElement('span');
+      btnToggle.className = 'action';
+      const setLabel = () => {
+        btnToggle.textContent = expanded.has(rootId)
+          ? 'Hide replies'
+          : `Show replies (${n})`;
+      };
       setLabel();
-    });
-    actions.appendChild(btnToggle);
+      btnToggle.addEventListener('click', () => {
+        if (expanded.has(rootId)) {
+          expanded.delete(rootId);
+          repliesWrap.style.display = 'none';
+        } else {
+          expanded.add(rootId);
+          repliesWrap.style.display = 'flex';
+        }
+        setLabel();
+      });
+      actions.appendChild(btnToggle);
+    }
   }
-}
 
-// animate admin text if needed
-maybeAnimateMessage(c, body);
+  // animate admin text if needed
+  maybeAnimateMessage(c, body);
 
-return { el: msg, repliesWrap };
+  return { el: msg, repliesWrap };
 }
 
 async function reorderPin(id, delta){
   try{
-    // derive current desired order from DOM (by pinned roots sequence)
     const pinnedIds = [...messagesEl.querySelectorAll('.msg')].map(d=>d.dataset.id).filter(id=>{
       const c = state.all.get(id); return c && !c.rid && c.top;
     });
@@ -640,14 +655,11 @@ function renderAllIncremental(){
   }
   seededChildCounts = true;
 
-  // roots order is already provided by server (pins first with saved order)
   for (const root of state.roots){
     const { el, repliesWrap } = renderOne(root, 0);
     messagesEl.appendChild(el);
 
-    // render children (nested tree)
     const children = state.childrenByRoot.get(root.id) || [];
-    // const byId = new Map(children.map(x=>[x.id,x])); // unused
     const kidsOf = new Map(); children.forEach(ch => { const p = ch.pid || root.id; if (!kidsOf.has(p)) kidsOf.set(p, []); kidsOf.get(p).push(ch); });
     const renderSub = (parentId, container) => {
       const arr = kidsOf.get(parentId) || [];
@@ -659,11 +671,9 @@ function renderAllIncremental(){
     };
     renderSub(root.id, repliesWrap);
 
-    // show or hide replies
     if (expanded.has(root.id)) repliesWrap.style.display = 'flex';
     else repliesWrap.style.display = 'none';
 
-    // clicking on any reply expands its root in-session (so everyone in session sees open)
     el.addEventListener('click', (evt)=>{
       if (evt.target && evt.target.classList.contains('action') && evt.target.textContent === 'Reply') {
         expanded.add(root.id);
@@ -708,14 +718,14 @@ btnSend && btnSend.addEventListener('click', async()=>{
   if (!content){ setStatus('Type something'); return; }
   if (!isAdmin && !allowPosts){ setStatus('Only admin can post right now', true); return; }
 
-  // Anti-grief: cap chars/lines client-side
-  if (content.length > MAX_CHARS) content = content.slice(0, MAX_CHARS);
-  // collapse >2 blank lines
-  content = content.replace(/\r\n?/g, '\n').replace(/\n{3,}/g, '\n\n');
+  // Do not truncate when message contains media tags; truncation would break data URLs / srcdoc
+  const hasMediaTags = /<(img|iframe|video)\\b/i.test(content);
+  if (!hasMediaTags && content.length > MAX_CHARS) content = content.slice(0, MAX_CHARS);
+  content = content.replace(/\\r\\n?/g, '\\n').replace(/\\n{3,}/g, '\\n\\n');
 
   // Non-admin: only one <img>
   if (!isAdmin){
-    const imgCount = (content.match(/<img\b[^>]*>/gi) || []).length;
+    const imgCount = (content.match(/<img\\b[^>]*>/gi) || []).length;
     if (imgCount > 1) { setStatus('Only one image per message allowed', true); return; }
   }
 
@@ -731,7 +741,6 @@ btnSend && btnSend.addEventListener('click', async()=>{
   btnSend.disabled = true;
 
   try{
-    // Compose pid/rid (admin can reply even when global replies are off or thread locked)
     const payload = {
       event: 'COMMENT_CREATE',
       url: PAGE_URL_PATH,
@@ -744,21 +753,17 @@ btnSend && btnSend.addEventListener('click', async()=>{
     if (r && r.code===0){
       const newId = r.data?.id;
 
-      // Optionally lock thread (no-reply) for new top-level admin message
       if (isAdmin && !replyTarget && sendNoReplyEl && sendNoReplyEl.checked){
         try { await api({ event:'COMMENT_TOGGLE_LOCK_FOR_ADMIN', id:newId, url: PAGE_URL_PATH, lock: true }); } catch{}
       }
-      // Optionally pin
       if (isAdmin && !replyTarget && sendAutoPinEl && sendAutoPinEl.checked){
         try { await api({ event:'COMMENT_SET_FOR_ADMIN', id:newId, url: PAGE_URL_PATH, set:{ top:true } }); } catch{}
       }
 
-      // clear composer
       textEl.value=''; updateCharCount(); fileEl.value=''; if (fileInfo) fileInfo.textContent='';
       replyTarget=null; if (replyTo) replyTo.style.display='none';
       setStatus('');
 
-      // reload
       await loadLatest(true);
     }else{
       setStatus(r?.message || 'Send failed', true);
@@ -769,13 +774,8 @@ btnSend && btnSend.addEventListener('click', async()=>{
 
 /* ===== Init ===== */
 (async function init(){
-  // count bind
   updateCharCount();
-
-  // initial config + load
   try { await refreshAdminStatus(); } catch(e){ setStatus(e?.message||'Config failed', true); }
   try { await loadLatest(true); } catch(e){ setStatus(e?.message||'Load failed', true); }
-
-  // live connection badge initial
   if (connEl){ connEl.textContent = ws && ws.readyState===1 ? "Live: Connected" : "Live: Connecting…"; }
 })();
