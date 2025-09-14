@@ -371,6 +371,7 @@ function renderSafeContent(input, opts = {}){
       textSpan.style.position = 'relative';
       textSpan.style.display = 'inline-block';
       textSpan.style.verticalAlign = 'baseline';
+      textSpan.style.lineHeight = 'inherit';
     }
     return textSpan;
   };
@@ -400,6 +401,8 @@ function createGlowOverlayOn(targetEl){
   const txt = targetEl.textContent || ''; if (!txt.trim()) return null;
   const ov = document.createElement('span'); ov.className = 'glow-overlay'; ov.textContent = txt;
   ov.style.font = getComputedStyle(targetEl).font;
+  ov.style.lineHeight = getComputedStyle(targetEl).lineHeight;
+  ov.style.whiteSpace = getComputedStyle(targetEl).whiteSpace || 'pre-wrap';
   targetEl.appendChild(ov); ov.style.setProperty('--glow-ol-opacity', '1'); return ov;
 }
 
@@ -486,9 +489,9 @@ function renderOne(c, depth=0){
   // actions
   const actions = document.createElement('div'); actions.className='actions';
 
-  const canReply =
-    (isAdmin) ? true
-              : (!!allowReplies && !c.locked);
+  // Reply availability: based on root thread's lock state
+  const rootLocked = !!(c.rid ? (state.all.get(c.rid)?.locked) : c.locked);
+  const canReply = isAdmin ? true : (allowReplies && !rootLocked);
 
   if (canReply){
     const btnReply = document.createElement('span'); btnReply.className='action'; btnReply.textContent='Reply';
