@@ -472,21 +472,24 @@ function createGlowOverlayOn(targetEl){
 }
 
 function maybeAnimateMessage(c, bodyEl){
-  // Only admins' message bodies glow
+  // Only admin messages glow, for all users
   if (!authorIsAdmin(c)) return;
 
   const forced       = mustAnimate.has(String(c.id));
   const isPinned     = !!c.top;
   const isNewToClient= !seenIds.has(String(c.id));
 
-  if (isPinned) {
-    // Pinned admin messages: animate once per session (or when forced)
-    if (sessionAnimatedPinned.has(c.id) && !forced) return;
+  if (forced) {
+    // Always animate if mustAnimate is set (new admin or pinned)
+    // Do not block on sessionAnimatedPinned or animatedOnce
+  } else if (isPinned) {
+    // Pinned admin messages: animate once per session
+    if (sessionAnimatedPinned.has(c.id)) return;
     sessionAnimatedPinned.add(c.id);
   } else {
-    // Non‑pinned: animate for everyone if mustAnimate (WS or 5s fallback), otherwise only once per client
-    if (!forced && animatedOnce.has(c.id)) return;
-    if (!forced && !(isNewToClient)) return;
+    // Non‑pinned: animate only once per client
+    if (animatedOnce.has(c.id)) return;
+    if (!isNewToClient) return;
     animatedOnce.add(c.id);
   }
 
