@@ -306,7 +306,7 @@ btnAttach && !btnAttach.dataset.boundClick && (btnAttach.dataset.boundClick='1',
   try{
     const reader = new FileReader();
     const dataURL = await new Promise((resolve,reject)=>{ reader.onload=()=>resolve(reader.result); reader.onerror=()=>reject(new Error('Read failed')); reader.readAsDataURL(f); });
-    const resp = await api({ event:'UPLOAD_IMAGE', photo:String(dataURL) });
+    const resp = await api({ event:'UPLOAD_IMAGE', photo:String(dataURL), filename: (f && f.name) ? String(f.name) : '' });
     if (resp && resp.code===0 && resp.data && resp.data.url){
       const url = resp.data.url; const prefix = textEl.value.trim().length ? '\n' : '';
       textEl.value = (textEl.value + `${prefix}<img src="${url}">`).trim(); updateCharCount(); setStatus('Image attached');
