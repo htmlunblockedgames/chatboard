@@ -258,7 +258,12 @@
         <input id="file" type="file" accept="image/*"/>
         <span id="fileInfo" class="file-name"></span>
         <button id="btnAttach" class="btn">Attach image</button>
-        <div style="margin-left:auto">
+        <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
+          <!-- Admin-only: shown by JS when logged in and not replying -->
+          <label id="optNoReply" class="tag" style="display:none;gap:6px;align-items:center;margin-right:0">
+            <input type="checkbox" id="sendNoReply">
+            No replies
+          </label>
           <button id="btnSend" class="btn primary">Send</button>
         </div>
       </div>
@@ -279,6 +284,6 @@
     </section>
   </main>
 
-  <script src="index.js?v=20"></script>
+  <script src="index.js?v=21"></script>
 </body>
 </html>

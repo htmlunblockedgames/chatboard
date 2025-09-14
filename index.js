@@ -1,5 +1,5 @@
 /* Poly Track Chatboard – index.js */
-console.log("chatboard.index.js v20");
+console.log("chatboard.index.js v21");
 
 const WORKER_URL    = "https://twikoo-cloudflare.ertertertet07.workers.dev";
 const PAGE_URL_PATH = "/chatboard/";
@@ -37,7 +37,6 @@ function connectWS(){
     ws.onmessage = (e) => {
       if (typeof e.data === 'string') {
         if (e.data === 'pong') return;
-        // Always refresh config first, then comments, so global chat/reply locks update in real-time
         const doRefresh = async () => {
           try { await refreshAdminStatus(); } catch {}
           try { await loadLatest(); } catch {}
@@ -46,7 +45,6 @@ function connectWS(){
           const msg = JSON.parse(e.data);
           if (msg && msg.type === "refresh") doRefresh();
         } catch {
-          // Non-JSON payload; still perform refresh
           doRefresh();
         }
       }
@@ -77,6 +75,8 @@ const adminPanel=$("adminPanel"), adminPass=$("adminPass"), btnAdminLogin=$("btn
 const statTotalEl=$("statTotal"), statRepliesEl=$("statReplies"), statTodayEl=$("statToday");
 const toggleRepliesEl=$("toggleReplies");
 const togglePostsEl=$("togglePosts");
+/* NEW: composer option for admin to send a no-reply message */
+const optNoReplyEl=$("optNoReply"), sendNoReplyEl=$("sendNoReply");
 
 const limitMbEl=$("limitMb"), limitChars=$("limitChars"), limitChars2=$("limitChars2"), charCount=$("charCount");
 const replyTo=$("replyTo"), replyName=$("replyName"), replyCancel=$("replyCancel");
@@ -263,6 +263,16 @@ function updateAdminUI(){
     togglePostsEl.checked = !allowPosts; // checked = only admin can post
     togglePostsEl.disabled = !isAdmin;
     togglePostsEl.parentElement.style.display = isAdmin ? 'inline-flex' : 'none';
+  }
+
+  // Show "No replies" checkbox only for admin and only when composing a root (not replying)
+  if (optNoReplyEl) {
+    const show = !!isAdmin && !replyTarget;
+    optNoReplyEl.style.display = show ? 'inline-flex' : 'none';
+    if (sendNoReplyEl) {
+      // If global replies are disabled, this option is moot (disable UI)
+      sendNoReplyEl.disabled = !show || !allowReplies;
+    }
   }
 
   // real-time: update send button & cancel any active reply if replies are disabled
@@ -630,7 +640,6 @@ async function loadOlder(){
     const prevAll = new Map(state.all);
     const prevTopsLen = state.tops.length;
     mergeList([...(list||[]), ...Array.from(prevAll.values())]);
-    // keep expanded set for previously expanded threads
     renderAll();
     if (state.tops.length === prevTopsLen) loadMoreBtn.textContent="No more";
     else { loadMoreBtn.disabled=false; loadMoreBtn.textContent="Load older"; }
@@ -663,6 +672,9 @@ async function sendMessage(){
     return;
   }
 
+  // Admin-only: whether to send as a "no replies" root message
+  const wantNoReply = !!(isAdmin && sendNoReplyEl && sendNoReplyEl.checked && !replyTarget);
+
   const nick = (nickEl.value || "Anonymous").trim().slice(0, 40);
   const payload = {
     event: 'COMMENT_CREATE',
@@ -681,8 +693,21 @@ async function sendMessage(){
     const r = await api(payload);
     if (r && r.code === 0) {
       textEl.value = ""; charCount.textContent = "0";
+      const newId = r?.data?.id;
+
+      // If admin chose "No replies" and this is a root message, lock it now
+      if (wantNoReply && newId) {
+        try {
+          await api({ event:'COMMENT_TOGGLE_LOCK_FOR_ADMIN', id: newId, url: PAGE_URL_PATH, lock: true });
+        } catch (e) {
+          setStatus(e?.message || 'Failed to lock replies for this message', true);
+        }
+      }
+      if (sendNoReplyEl) sendNoReplyEl.checked = false;
+
       replyTarget = null; replyTo.style.display="none";
       setStatus('Sent!');
+      updateAdminUI();
     } else {
       setStatus(r?.message || 'Send failed', true);
     }
@@ -727,7 +752,11 @@ fileEl.addEventListener('change', ()=>{
   fileInfo.textContent = f ? `${f.name} (${(f.size/1024/1024).toFixed(2)} MB)` : '';
 });
 btnAttach.addEventListener('click', attachImage);
-replyCancel.addEventListener('click', ()=>{ replyTarget=null; replyTo.style.display='none'; });
+replyCancel.addEventListener('click', ()=>{
+  replyTarget=null;
+  replyTo.style.display='none';
+  updateAdminUI();
+});
 
 btnAdminLogin.addEventListener('click', async ()=>{
   const pass = adminPass.value || "";
@@ -771,6 +800,7 @@ messagesEl.addEventListener('click', async (e)=>{
     replyName.textContent = c?.nick || 'Anonymous';
     replyTo.style.display = 'flex';
     textEl.focus();
+    updateAdminUI();
     return;
   }
 
