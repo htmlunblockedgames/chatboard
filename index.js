@@ -170,7 +170,10 @@ const initialOf = s => (s||"A").trim().charAt(0).toUpperCase();
 function truthy(v){ return v === true || v === 1 || v === '1' || v === 'true'; }
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 function parseRetryAfter(h){ if (!h) return 0; const n = Number(h); if (!Number.isNaN(n)) return Date.now() + n*1000; const d = Date.parse(h); return Number.isNaN(d) ? 0 : d; }
-function authorIsAdmin(c){ return String((c && c.nick) || '') === ADMIN_NICK; }
+function authorIsAdmin(c){
+  const n = String((c && c.nick) || '').trim().toLowerCase();
+  return n === ADMIN_NICK.toLowerCase();
+}
 
 /* Inline confirm helper (two-tap) */
 function armConfirmButton(btn, label = 'Are you sure?', ms = 3000){
@@ -460,6 +463,8 @@ function createGlowOverlayOn(targetEl){
 }
 
 function maybeAnimateMessage(c, bodyEl){
+  const stale = bodyEl && bodyEl.querySelector && bodyEl.querySelector(':scope > .glow-overlay');
+  if (stale) stale.remove();
   const isPinnedAdmin = c.top && authorIsAdmin(c);
   const isRecentAdmin = authorIsAdmin(c) && (Date.now() - Number(c.created || 0) <= 5000);
 
@@ -486,7 +491,11 @@ function maybeAnimateMessage(c, bodyEl){
       ov.style.animation = 'glowSweep 2s ease-in-out forwards';
 
       // After the sweep, fade out over 1.5s to reveal base text
-      setTimeout(() => { ov.style.opacity = '0'; }, 2000);
+      setTimeout(() => {
+        // force reflow so the opacity transition always fires
+        void ov.offsetWidth;
+        ov.style.opacity = '0';
+      }, 2000);
 
       const cleanup = () => { if (ov && ov.parentNode) ov.parentNode.removeChild(ov); };
       ov.addEventListener('transitionend', cleanup, { once: true });

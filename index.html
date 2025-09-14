@@ -199,6 +199,7 @@
       background-size: 200% 100%;
       -webkit-background-clip: text;
       background-clip: text;
+      -webkit-text-fill-color: transparent;
       background-position: var(--shimmer-x, 0%) 0;
       text-shadow: 0 0 3px rgba(245,196,0,.12), 0 0 6px rgba(245,196,0,.06);
     }
@@ -219,6 +220,7 @@
       background-size:200% 100%;
       -webkit-background-clip:text;
       background-clip:text;
+      -webkit-text-fill-color: transparent;
       background-position:-60% 0;
       animation: glowSweep 2s ease-in-out forwards;
       opacity: var(--glow-ol-opacity, 1);
@@ -239,6 +241,11 @@
     .avatar{ width:32px; height:32px; flex:0 0 32px; }
     .meta{ font-size:11px; gap:8px; }
     .content{ margin-top:4px; line-height:1.4; }
+    .content .glow-target{
+      position: relative;
+      display: inline-block;
+      vertical-align: baseline;
+    }
     .content img{ max-width:420px; margin:6px 0; }
     .actions{ margin-top:4px; gap:10px; }
     .action{ font-size:11px; padding:4px 8px; }
