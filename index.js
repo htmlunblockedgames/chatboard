@@ -741,11 +741,12 @@ async function loadLatest(){
     const nowTs = Date.now();
     for (const it of incoming) {
       if (authorIsAdmin(it)) {
-        if (it.top) {
-          // Pinned admin messages should glow on every reload (session-limited by sessionAnimatedPinned)
+        if (it.top && !sessionAnimatedPinned.has(it.id)) {
+          // Pinned admin messages: glow only once per reload (per session)
           mustAnimate.add(String(it.id));
-        } else if (nowTs - Number(it.created || 0) <= 5000) {
-          // Non‑pinned admin messages created within the last 5s should glow once for everyone
+          sessionAnimatedPinned.add(it.id);
+        } else if (!it.top && (nowTs - Number(it.created || 0) <= 5000)) {
+          // Non-pinned admin messages: glow for all users if new (WS or recent)
           mustAnimate.add(String(it.id));
         }
       }
