@@ -78,17 +78,23 @@ function connectWS(){
       if (e.data === 'pong') return;
       try {
         const msg = JSON.parse(e.data);
-        if (msg && msg.type === 'new-reply' && msg.rootId) {
-          const rid = String(msg.rootId);
-          expanded.add(rid);
-          const rootMsg = messagesEl && messagesEl.querySelector(`.msg[data-id="${rid}"]`);
-          if (rootMsg) {
-            const wrap = rootMsg.querySelector(':scope > .bubble > .replies');
-            if (wrap) setRepliesVisibility(wrap, true);
+        if (msg && msg.type === 'new-reply') {
+          if (msg.id) { mustAnimate.add(String(msg.id)); }
+          if (msg.rootId) {
+            const rid = String(msg.rootId);
+            expanded.add(rid);
+            const rootMsg = messagesEl && messagesEl.querySelector(`.msg[data-id="${rid}"]`);
+            if (rootMsg) {
+              const wrap = rootMsg.querySelector(':scope > .bubble > .replies');
+              if (wrap) setRepliesVisibility(wrap, true);
+            }
           }
           queueRefresh(100);
+        } else if (msg && msg.type === 'new-root') {
+          if (msg.id) { mustAnimate.add(String(msg.id)); }
+          queueRefresh(120);
         } else {
-          queueRefresh(150); // new-root / refresh / unknown -> coalesced refresh
+          queueRefresh(150); // refresh / unknown -> coalesced refresh
         }
       } catch {
         queueRefresh(150);
