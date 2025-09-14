@@ -1,5 +1,5 @@
 /* Poly Track Chatboard – index.js */
-console.log("chatboard.index.js v25");
+console.log("chatboard.index.js v26");
 
 const WORKER_URL    = "https://twikoo-cloudflare.ertertertet07.workers.dev";
 const PAGE_URL_PATH = "/chatboard/";
@@ -157,6 +157,67 @@ function parseRetryAfter(h){
 }
 function authorIsAdmin(c){ return String((c && c.nick) || '') === 'Poly Track Administrator'; }
 
+/* Build actions toolbar (reused for fresh & existing nodes) */
+function buildActionsFor(c){
+  const actions = document.createElement("div");
+  actions.className = "actions";
+
+  const cid = c._id || c.id;
+  const rootIdForLock = (c.rid && c.rid !== "") ? c.rid : cid;
+  const rootForLock = state.all.get(rootIdForLock);
+  const threadLocked = !!(rootForLock && rootForLock.locked);
+
+  // Reply (global replies or admin, and thread not locked)
+  if ((allowReplies || isAdmin) && !threadLocked) {
+    const replyBtn = document.createElement("span");
+    replyBtn.className = "action";
+    replyBtn.dataset.action = "reply";
+    replyBtn.textContent = "↩ Reply";
+    actions.appendChild(replyBtn);
+  }
+
+  // Show/Close replies toggle (roots with children)
+  const count = c.children?.length || 0;
+  if ((c.rid || "") === "" && count > 0) {
+    const toggleBtn = document.createElement("span");
+    toggleBtn.className = "action";
+    toggleBtn.dataset.action = "toggleReplies";
+    toggleBtn.dataset.parent = cid;
+    toggleBtn.textContent = (expanded.has(cid)
+      ? (count === 1 ? "Close Reply" : "Close Replies")
+      : (count === 1 ? "Show Reply" : "Show Replies"));
+    actions.appendChild(toggleBtn);
+  }
+
+  // Admin controls
+  if (isAdmin) {
+    const delBtn = document.createElement("span");
+    delBtn.className = "action";
+    delBtn.dataset.action = "adminDel";
+    delBtn.dataset.cid = cid;
+    delBtn.textContent = "Delete";
+    actions.appendChild(delBtn);
+
+    if ((c.rid || "") === "") {
+      const pinBtn = document.createElement("span");
+      pinBtn.className = "action";
+      pinBtn.dataset.action = "adminPin";
+      pinBtn.dataset.cid = cid;
+      pinBtn.textContent = Number(c.top) === 1 ? "Unpin" : "Pin";
+      actions.appendChild(pinBtn);
+
+      const lockBtn = document.createElement("span");
+      lockBtn.className = "action";
+      lockBtn.dataset.action = "adminLock";
+      lockBtn.dataset.cid = cid;
+      lockBtn.textContent = threadLocked ? "Unlock Replies" : "Lock Replies";
+      actions.appendChild(lockBtn);
+    }
+  }
+
+  return actions;
+}
+
 /* Render-safe content:
    - Everyone: images
    - Links & embeds: admin only (includes general iframes and srcdoc) */
@@ -200,7 +261,6 @@ function renderSafeContent(input, opts = {}){
       }
 
       if (allowEmbeds && tag === 'iframe') {
-        // Allow admin to embed either a remote site (src) or raw HTML (srcdoc)
         const hasSrcdoc = node.hasAttribute('srcdoc');
         const src = node.getAttribute('src') || '';
         if (hasSrcdoc || isHttp(src)) {
@@ -215,7 +275,6 @@ function renderSafeContent(input, opts = {}){
           f.title = node.getAttribute('title') || 'Embedded content';
           f.width = node.getAttribute('width') || '560';
           f.height = node.getAttribute('height') || '315';
-          // Sandbox for safety; allows most sites to function while isolating them
           f.setAttribute('sandbox', 'allow-scripts allow-same-origin');
           return frag.appendChild(f);
         }
@@ -442,9 +501,10 @@ function bindAdminTogglesOnce(){
       if (!isAdmin) { e.preventDefault(); updateAdminUI(); return; }
       const onlyAdmin = !!e.target.checked; // checked = only admin can post
 
-      // Optimistic real-time
+      // Optimistic
       allowPosts = !onlyAdmin;
       updateAdminUI();
+      renderAllIncremental();
 
       e.target.disabled = true;
       try{
@@ -457,6 +517,7 @@ function bindAdminTogglesOnce(){
       }finally{
         e.target.disabled = false;
         updateAdminUI();
+        renderAllIncremental();
       }
     });
   }
@@ -608,35 +669,7 @@ function renderMsg(c){
     }
   }
 
-  const actions=document.createElement("div"); actions.className="actions";
-  const rootIdForLock = (c.rid && c.rid !== "") ? c.rid : (c._id || c.id);
-  const rootForLock = state.all.get(rootIdForLock);
-  const threadLocked = !!(rootForLock && rootForLock.locked);
-
-  if ((allowReplies || isAdmin) && !threadLocked) {
-    const replyBtn = document.createElement("span");
-    replyBtn.className = "action";
-    replyBtn.dataset.action = "reply";
-    replyBtn.textContent = "↩ Reply";
-    actions.append(replyBtn);
-  }
-  if (isAdmin) {
-    const delBtn = document.createElement('span');
-    delBtn.className = 'action'; delBtn.dataset.action = 'adminDel'; delBtn.dataset.cid = cid; delBtn.textContent = 'Delete';
-    actions.appendChild(delBtn);
-
-    if ((c.rid || '') === '') {
-      const pinBtn = document.createElement('span');
-      pinBtn.className = 'action'; pinBtn.dataset.action = 'adminPin';
-      pinBtn.dataset.cid = cid; pinBtn.textContent = Number(c.top) === 1 ? 'Unpin' : 'Pin';
-      actions.appendChild(pinBtn);
-
-      const lockBtn = document.createElement('span');
-      lockBtn.className = 'action'; lockBtn.dataset.action = 'adminLock';
-      lockBtn.dataset.cid = cid; lockBtn.textContent = threadLocked ? 'Unlock Replies' : 'Lock Replies';
-      actions.appendChild(lockBtn);
-    }
-  }
+  const actions = buildActionsFor(c);
 
   wrap.append(avatar,bubble);
   bubble.append(meta,content,actions);
@@ -658,30 +691,22 @@ function renderAllIncremental(){
   const existing = new Map();
   messagesEl.querySelectorAll(':scope > .msg').forEach(n => existing.set(n.dataset.cid, n));
 
-  // desired order
   const desired = state.tops.map(c => {
     let node = existing.get(c._id);
-    if (!node) node = renderMsg(c);
-    else {
-      // update reply toggle/action labels, but keep node instance (preserves animations)
-      const actions = node.querySelector('.actions');
-      if (actions) {
-        // Clear only the show/close replies control; we'll rebuild below
-        Array.from(actions.querySelectorAll('[data-action="toggleReplies"]')).forEach(x => x.remove());
-      }
-      const count = c.children?.length || 0;
-      if (count > 0) {
-        const toggleBtn = document.createElement('span');
-        toggleBtn.className = 'action';
-        toggleBtn.dataset.action = 'toggleReplies';
-        toggleBtn.dataset.parent = c._id;
-        toggleBtn.textContent = (expanded.has(c._id)
-          ? (count===1 ? 'Close Reply' : 'Close Replies')
-          : (count===1 ? 'Show Reply' : 'Show Replies'));
-        actions && actions.appendChild(toggleBtn);
+    if (!node) {
+      node = renderMsg(c);
+    } else {
+      // Rebuild actions completely (updates reply visibility, lock/unlock, pin labels)
+      const oldActions = node.querySelector(".actions");
+      if (oldActions) {
+        const fresh = buildActionsFor(c);
+        oldActions.replaceWith(fresh);
+      } else {
+        const fresh = buildActionsFor(c);
+        (node.querySelector(".bubble") || node).appendChild(fresh);
       }
 
-      // replies container content (only rebuild if needed)
+      // Replies container
       let cont = node.querySelector('#replies-'+c._id);
       if (!cont) {
         cont = document.createElement('div');
@@ -690,7 +715,6 @@ function renderAllIncremental(){
         (node.querySelector('.bubble') || node).appendChild(cont);
       }
       const wantOpen = expanded.has(c._id);
-      const currentlyOpen = cont.style.display !== 'none';
       if (wantOpen) {
         const currentMsgs = cont.querySelectorAll(':scope > .msg').length;
         const needRebuild = currentMsgs !== (c.children?.length || 0);
@@ -703,13 +727,11 @@ function renderAllIncremental(){
     return node;
   });
 
-  // Reorder/append without nuking nodes
   const frag = document.createDocumentFragment();
   for (const n of desired) frag.appendChild(n);
-  messagesEl.innerHTML = ""; // safe to clear after we moved nodes into frag
+  messagesEl.innerHTML = "";
   messagesEl.appendChild(frag);
 
-  // Load older button visibility
   if (state.tops.length) { loadMoreBtn.style.display="inline-flex"; loadMoreBtn.disabled=false; loadMoreBtn.textContent="Load older"; }
   else { loadMoreBtn.style.display="none"; }
 
@@ -725,6 +747,20 @@ async function loadLatest(){
     const comments = r?.data?.comments || [];
     serverCounts = r?.data?.counts || null;
     mergeList(comments);
+
+    // Auto-open threads that gained new replies since last snapshot (everyone in-session)
+    for (const root of state.tops) {
+      const id = root._id || root.id;
+      const count = root.children?.length || 0;
+      const prev = prevChildCounts.get(id) || 0;
+      if (count > prev) expanded.add(id);
+    }
+    // Update snapshot
+    for (const root of state.tops) {
+      const id = root._id || root.id;
+      prevChildCounts.set(id, root.children?.length || 0);
+    }
+
     renderAllIncremental();
   }catch(e){
     setStatus(e?.message || 'Failed to load', true);
@@ -744,6 +780,13 @@ async function loadOlder(){
     const prevAll = new Map(state.all);
     const prevTopsLen = state.tops.length;
     mergeList([...(list||[]), ...Array.from(prevAll.values())]);
+
+    // Refresh reply-count snapshot (no auto-open on older loads)
+    for (const root of state.tops) {
+      const id = root._id || root.id;
+      prevChildCounts.set(id, root.children?.length || 0);
+    }
+
     renderAllIncremental();
     if (state.tops.length === prevTopsLen) loadMoreBtn.textContent="No more";
     else { loadMoreBtn.disabled=false; loadMoreBtn.textContent="Load older"; }
@@ -768,13 +811,11 @@ async function sendMessage(){
   const content = sanitizeClient(raw).trim();
   if (!content) return;
 
-  // respect global posting lock
   if (!isAdmin && !allowPosts) {
     updateSendButtonUI();
     return;
   }
 
-  // Admin-only options (root only)
   const wantNoReply = !!(isAdmin && sendNoReplyEl && sendNoReplyEl.checked && !replyTarget);
   const wantAutoPin = !!(isAdmin && sendAutoPinEl && sendAutoPinEl.checked && !replyTarget);
   if (wantAutoPin) {
