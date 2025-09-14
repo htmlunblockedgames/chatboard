@@ -66,7 +66,17 @@ const MAX_CHARS     = 2000;
 })();
 
 /* ===== Live updates via WebSocket ===== */
-const WS_ENDPOINT = WORKER_URL.replace(/^http/i, 'ws').replace(/\/$/, '') + '/ws?room=' + encodeURIComponent(PAGE_URL_PATH);
+// UPDATED: forward parent/referrer context so the Worker can allow Google Sites embeds
+const __parentRef = document.referrer || "";
+const __ancestor = (document.location && document.location.ancestorOrigins && document.location.ancestorOrigins.length)
+  ? document.location.ancestorOrigins[0]
+  : "";
+const WS_ENDPOINT =
+  WORKER_URL.replace(/^http/i, 'ws').replace(/\/$/, '') +
+  '/ws?room=' + encodeURIComponent(PAGE_URL_PATH) +
+  '&parent=' + encodeURIComponent(__parentRef) +
+  '&ancestor=' + encodeURIComponent(__ancestor);
+
 let ws = null, wsPing = null, wsBackoff = 500;
 function connectWS(){
   try{
