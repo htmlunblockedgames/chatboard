@@ -1,13 +1,14 @@
-/* Poly Track Chatboard – index.js (v30) */
-console.log("chatboard.index.js v30");
+/* Poly Track Chatboard – index.js (v31) */
+console.log("chatboard.index.js v31");
 
+/* ===== Constants ===== */
 const WORKER_URL    = "https://twikoo-cloudflare.ertertertet07.workers.dev";
 const PAGE_URL_PATH = "/chatboard/";
 const PAGE_HREF     = "https://htmlunblockedgames.github.io/chatboard/";
 const MAX_FILE_MB   = 7;
 const MAX_CHARS     = 2000;
 
-/* ===== Global shimmer driver (keeps phase stable) ===== */
+/* ===== Global shimmer driver (keeps phase stable across reflows) ===== */
 (function startGlobalShimmer(){
   const durMs = 3200;
   let start = performance.now();
@@ -82,11 +83,18 @@ const embedBox=$("embedBox"), embedModeEl=$("embedMode"),
 const limitMbEl=$("limitMb"), limitChars=$("limitChars"), limitChars2=$("limitChars2"), charCount=$("charCount");
 const replyTo=$("replyTo"), replyName=$("replyName"), replyCancel=$("replyCancel");
 
+/* Show admin panel on ?admin=1 at /chatboard/ (and always if logged in) */
 const SHOW_ADMIN_PANEL =
   window.location.hostname === "htmlunblockedgames.github.io" &&
   window.location.pathname === "/chatboard/" &&
   new URLSearchParams(window.location.search).get("admin") === "1";
 if (adminPanel) adminPanel.style.display = SHOW_ADMIN_PANEL ? "grid" : "none";
+
+/* Ensure WS starts once */
+if (!window.__wsStarted) {
+  window.__wsStarted = true;
+  try { connectWS(); } catch {}
+}
 
 /* ===== State ===== */
 let TK_TOKEN = localStorage.getItem('twikoo_access_token') || null;
@@ -122,7 +130,7 @@ function parseRetryAfter(h){
 }
 function authorIsAdmin(c){ return String((c && c.nick) || '') === 'Poly Track Administrator'; }
 
-/* Inline confirm helper */
+/* Inline confirm helper (two-tap) */
 function armConfirmButton(btn, label = 'Are you sure?', ms = 3000){
   if (!btn) return false;
   if (btn.dataset.confirm === '1') {
@@ -275,7 +283,6 @@ function updateAdminUI(){
   if (!allowReplies) { replyTarget = null; replyTo.style.display = 'none'; }
   updateSendButtonUI();
 
-  // force buttons to rebuild to reflect toggles immediately
   try { renderAllIncremental(); } catch {}
 }
 
@@ -306,6 +313,63 @@ async function checkConnection(){
     setStatus('Connection error', true);
     return false;
   }
+}
+
+/* ===== Bind once: counters & file attach ===== */
+function updateCharCount(){ if (charCount && textEl) charCount.textContent = String(textEl.value.length); }
+if (textEl && !textEl.dataset.boundCount) {
+  textEl.dataset.boundCount = '1';
+  textEl.addEventListener('input', updateCharCount);
+}
+if (fileEl && !fileEl.dataset.boundChange) {
+  fileEl.dataset.boundChange = '1';
+  fileEl.addEventListener('change', () => {
+    const f = fileEl.files && fileEl.files[0];
+    if (!f) { fileInfo.textContent = ''; return; }
+    const mb = (f.size / (1024*1024)).toFixed(2);
+    fileInfo.textContent = `${f.name} · ${mb} MB`;
+  });
+}
+if (btnAttach && !btnAttach.dataset.boundClick) {
+  btnAttach.dataset.boundClick = '1';
+  btnAttach.addEventListener('click', async () => {
+    const f = fileEl && fileEl.files && fileEl.files[0];
+    if (!f) { setStatus('Choose an image first'); return; }
+    const sizeMB = f.size / (1024*1024);
+    if (sizeMB > MAX_FILE_MB) { setStatus(`Image too large (limit ${MAX_FILE_MB}MB)`, true); return; }
+
+    // Non-admin: only 1 <img> allowed in the message (client-side)
+    const existingImgs = (textEl.value.match(/&lt;img\b[^&gt;]*&gt;|<img\b[^>]*>/gi) || []).length;
+    if (!isAdmin && existingImgs >= 1) {
+      setStatus('Only one image per message allowed', true);
+      return;
+    }
+
+    setStatus('Uploading image…');
+    try {
+      const reader = new FileReader();
+      const dataURL = await new Promise((resolve, reject) => {
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(new Error('Read failed'));
+        reader.readAsDataURL(f);
+      });
+
+      const resp = await api({ event: 'UPLOAD_IMAGE', photo: String(dataURL) });
+      if (resp && resp.code === 0 && resp.data && resp.data.url) {
+        const url = resp.data.url;
+        const prefix = textEl.value.trim().length ? '\n' : '';
+        textEl.value = (textEl.value + `${prefix}<img src="${url}">`).trim();
+        updateCharCount();
+        setStatus('Image attached');
+        fileEl.value = '';
+        fileInfo.textContent = '';
+      } else {
+        setStatus(resp && resp.message ? resp.message : 'Upload failed', true);
+      }
+    } catch (e) {
+      setStatus(e && e.message ? e.message : 'Upload failed', true);
+    }
+  });
 }
 
 /* ===== Admin toggles (bind once) ===== */
@@ -361,37 +425,18 @@ function renderSafeContent(input, opts = {}){
   wrap.style.position = 'relative';
 
   let textSpan = null;
-  const flushTextSpan = () => {
-    if (textSpan && textSpan.childNodes.length) {
-      wrap.appendChild(textSpan);
-    }
-    textSpan = null;
-  };
-  const ensureTextSpan = () => {
-    if (!textSpan) {
-      textSpan = document.createElement('span');
-      textSpan.className = 'glow-target';
-      textSpan.style.whiteSpace = 'pre-wrap';
-    }
-    return textSpan;
-  };
-  const pushText = (s) => {
-    const span = ensureTextSpan();
-    span.appendChild(document.createTextNode(s || ''));
-  };
+  const flushTextSpan = () => { if (textSpan && textSpan.childNodes.length) wrap.appendChild(textSpan); textSpan = null; };
+  const ensureTextSpan = () => { if (!textSpan) { textSpan = document.createElement('span'); textSpan.className = 'glow-target'; textSpan.style.whiteSpace = 'pre-wrap'; } return textSpan; };
+  const pushText = (s) => { ensureTextSpan().appendChild(document.createTextNode(s || '')); };
 
   const isHttp = (u)=> /^https?:\/\//i.test(u||'');
   const isDirectVideo = (u)=> /\.(mp4|webm|ogg)(\?.*)?$/i.test(u||'');
 
   Array.from(tpl.content.childNodes).forEach(node => {
-    if (node.nodeType === Node.TEXT_NODE) {
-      pushText(node.textContent);
-      return;
-    }
+    if (node.nodeType === Node.TEXT_NODE) { pushText(node.textContent); return; }
     if (node.nodeType === Node.ELEMENT_NODE) {
       const tag = node.tagName.toLowerCase();
       if (tag === 'br') { ensureTextSpan().appendChild(document.createElement('br')); return; }
-
       if (tag === 'img') {
         flushTextSpan();
         const src = node.getAttribute('src') || '';
@@ -400,12 +445,9 @@ function renderSafeContent(input, opts = {}){
           img.src = src; img.alt = node.getAttribute('alt') || '';
           img.loading = 'lazy'; img.decoding = 'async';
           wrap.appendChild(img);
-        } else {
-          pushText('[blocked image]'); flushTextSpan();
-        }
+        } else { pushText('[blocked image]'); flushTextSpan(); }
         return;
       }
-
       if (tag === 'a') {
         const href = node.getAttribute('href') || '';
         const txt = node.textContent || href;
@@ -413,12 +455,9 @@ function renderSafeContent(input, opts = {}){
           const a = document.createElement('a');
           a.href = href; a.target = '_blank'; a.rel = 'noopener noreferrer nofollow'; a.textContent = txt;
           flushTextSpan(); wrap.appendChild(a);
-        } else {
-          pushText(txt);
-        }
+        } else { pushText(txt); }
         return;
       }
-
       if (allowEmbeds && tag === 'iframe') {
         flushTextSpan();
         const hasSrcdoc = node.hasAttribute('srcdoc');
@@ -430,12 +469,9 @@ function renderSafeContent(input, opts = {}){
           f.width = node.getAttribute('width') || '560'; f.height = node.getAttribute('height') || '315';
           f.setAttribute('sandbox', 'allow-scripts allow-same-origin');
           wrap.appendChild(f);
-        } else {
-          pushText('[blocked iframe]'); flushTextSpan();
-        }
+        } else { pushText('[blocked iframe]'); flushTextSpan(); }
         return;
       }
-
       if (allowEmbeds && tag === 'video') {
         flushTextSpan();
         const src = node.getAttribute('src') || '';
@@ -443,13 +479,10 @@ function renderSafeContent(input, opts = {}){
           const v = document.createElement('video');
           v.src = src; v.controls = true; v.preload = 'metadata'; v.style.maxWidth = '480px';
           wrap.appendChild(v);
-        } else {
-          pushText('[blocked video]'); flushTextSpan();
-        }
+        } else { pushText('[blocked video]'); flushTextSpan(); }
         return;
       }
-
-      // Fallback unknown elements -> plain text
+      // fallback
       pushText(node.textContent || '');
     }
   });
@@ -458,7 +491,7 @@ function renderSafeContent(input, opts = {}){
   return wrap;
 }
 
-/* Glow overlay that sits on .glow-target text only */
+/* Glow overlay utilities (text shimmer then fade out) */
 function createGlowOverlayOn(targetEl){
   if (!targetEl) return null;
   const prev = targetEl.querySelector(':scope > .glow-overlay');
@@ -511,7 +544,8 @@ function buildActionsFor(c){
   const rootForLock = state.all.get(rootIdForLock);
   const threadLocked = !!(rootForLock && rootForLock.locked);
 
-  if ((allowReplies || isAdmin) && !threadLocked) {
+  // Admin can reply even when thread/global replies are off:
+  if ((allowReplies || isAdmin) && (!threadLocked || isAdmin)) {
     const replyBtn = document.createElement("span");
     replyBtn.className = "action";
     replyBtn.dataset.action = "reply";
@@ -612,6 +646,14 @@ function renderMsg(c){
   el.setAttribute('data-root', ((c.rid || '') === '') ? '1' : '0');
   el.setAttribute('data-top', Number(c.top) === 1 ? '1' : '0');
 
+  // Pinned badge (top-right) for pinned root messages
+  if (Number(c.top) === 1 && ((c.rid || '') === '')) {
+    const badge = document.createElement('span');
+    badge.className = 'pin-badge';
+    badge.textContent = 'Pinned';
+    el.appendChild(badge);
+  }
+
   const avatar = document.createElement('div');
   avatar.className = 'avatar' + (authorIsAdmin(c) ? ' admin' : '');
   avatar.textContent = initialOf(c.nick);
@@ -622,330 +664,344 @@ function renderMsg(c){
   const nick = document.createElement('span'); nick.className='nick' + (authorIsAdmin(c) ? ' admin-glow' : '');
   nick.textContent = c.nick || 'Anonymous';
   meta.appendChild(nick);
-  const time = document.createElement('span'); time.textContent = new Date(c.created || Date.now()).toLocaleString();
-  meta.appendChild(time);
+  // time
+  const dt = new Date(Number(c.created || Date.now()));
+  const ts = document.createElement('span'); ts.textContent = dt.toLocaleString();
+  meta.appendChild(ts);
   bubble.appendChild(meta);
 
-  const contentWrap = document.createElement('div'); contentWrap.className='content';
-  const allowEmb = !!isAdmin;
-  const allowLnk = !!isAdmin;
-  const body = renderSafeContent(c.content || c.comment || '', { allowEmbeds: allowEmb, allowLinks: allowLnk });
-  contentWrap.appendChild(body);
-  bubble.appendChild(contentWrap);
+  // content
+  const body = document.createElement('div'); body.className='content';
+  const allowEmbeds = !!isAdmin; // only admin content can contain embeds
+  const safe = renderSafeContent(c.content || '', { allowLinks:true, allowEmbeds: allowEmbeds });
+  body.appendChild(safe);
+  bubble.appendChild(body);
 
+  // actions
+  const actions = buildActionsFor(c);
+  bubble.appendChild(actions);
+
+  // replies container
+  const repliesWrap = document.createElement('div'); repliesWrap.className = 'replies';
+  repliesWrap.setAttribute('data-parent', cid);
+  bubble.appendChild(repliesWrap);
+
+  el.appendChild(bubble);
+
+  // Play glow overlay:
   if (authorIsAdmin(c)) {
-    if ((Date.now() - (c.created||0)) <= 5000) {
-      applyOverlayGlowRemainder(body, c);
+    if (Number(c.top) === 1 && ((c.rid||'')==='')) {
+      // pinned admin messages: replay on reload once per session
+      if (!pinAnimPlayed.has(cid)) {
+        pinAnimPlayed.add(cid);
+        applyOverlayGlowOnce(safe);
+      }
+    } else {
+      // for fresh messages, play remainder only within 2s window
+      applyOverlayGlowRemainder(safe, c);
     }
   }
 
-  const repliesBox = document.createElement('div'); repliesBox.className='replies'; repliesBox.id = `replies-${cid}`;
-  if (c.children && c.children.length && expanded.has(cid)) {
-    c.children.forEach(ch => repliesBox.appendChild(renderMsg(ch)));
-    repliesBox.style.display = 'flex';
-  } else {
-    repliesBox.style.display = 'none';
-  }
-
-  const actions = buildActionsFor(c);
-  bubble.appendChild(actions);
-  if ((c.rid || '') === '') bubble.appendChild(repliesBox);
-  el.appendChild(bubble);
   return el;
 }
 
-function renderAllIncremental(){
-  if (!messagesEl) return;
-  messagesEl.innerHTML = '';
+function sortAndBuild(childrenMap){
   const roots = [];
-  for (const v of state.all.values()) if ((v.rid||'')==='') roots.push(v);
-  const pinned = roots.filter(r=>Number(r.top)===1);
-  const others = roots.filter(r=>Number(r.top)!==1).sort((a,b)=>(b.created||0)-(a.created||0));
-  for (const r of [...pinned, ...others]) {
-    messagesEl.appendChild(renderMsg(r));
+  const children = new Map();
+  for (const c of state.all.values()) {
+    if ((c.rid || '') === '') roots.push(c);
+    else {
+      const arr = children.get(c.rid) || [];
+      arr.push(c);
+      children.set(c.rid, arr);
+    }
   }
-}
-
-function mergeList(list){
-  const temp = new Map();
-  (Array.isArray(list)?list:[]).forEach(src=>{
-    const id = src._id || src.id; if (!id) return;
-    temp.set(id, {
-      ...src,
-      _id: id, id,
-      pid: src.pid || "", rid: src.rid || "",
-      created: src.created || Date.now(),
-      nick: src.nick || "Anonymous",
-      avatar: src.avatar || "",
-      comment: src.comment || src.content || "",
-      top: Number(src.top ? 1 : 0),
-      locked: !!src.locked,
-      children: []
-    });
+  roots.sort((a,b)=>{
+    const ta = Number(a.top) === 1 ? 1 : 0;
+    const tb = Number(b.top) === 1 ? 1 : 0;
+    if (ta !== tb) return tb - ta; // pinned first
+    return b.created - a.created;
   });
-  for (const o of temp.values()){
-    if ((o.rid||'')!=='') {
-      const root = temp.get(o.rid);
-      if (root) root.children.push(o);
-    }
-  }
-  for (const root of temp.values()){
-    if ((root.rid||'')==='' && root.children.length) {
-      root.children.sort((a,b)=>(a.created||0)-(b.created||0));
-    }
-  }
-  state.all = temp;
+  for (const arr of children.values()) arr.sort((a,b)=> a.created - b.created);
+  return { roots, children };
 }
 
+function renderAll(){
+  messagesEl.innerHTML = '';
+  const map = new Map(); state.all.forEach((v,k)=>map.set(k, v)); // stable
+  const { roots, children } = sortAndBuild();
+  state.tops = roots;
+
+  for (const r of roots) {
+    const el = renderMsg(r);
+    messagesEl.appendChild(el);
+
+    const cid = r._id || r.id;
+    const child = children.get(cid) || [];
+    const wrap = el.querySelector(`.replies[data-parent="${cid}"]`);
+    if (wrap) {
+      wrap.innerHTML = '';
+      if (expanded.has(cid) && child.length) {
+        wrap.style.display = 'flex';
+        child.forEach(ch => wrap.appendChild(renderMsg(ch)));
+      } else {
+        wrap.style.display = 'none';
+      }
+    }
+  }
+}
+
+function renderAllIncremental(){
+  // simple full re-render (keeps logic straightforward & avoids drift)
+  renderAll();
+}
+
+/* ===== Fetch & update ===== */
 async function loadLatest(force=false){
-  if (loading && !force) return;
+  if (loading) return;
   loading = true;
   try{
-    const r = await api({ event:'COMMENT_GET', url: PAGE_URL_PATH, page: 1, pageSize: 200 });
-    const data = r?.data || {};
-    serverCounts = data.counts || null;
-    mergeList(data.comments || []);
-    renderAllIncremental();
+    const r = await api({ event:'COMMENT_GET', url: PAGE_URL_PATH, page:1, pageSize:100 });
+    if (r && r.code === 0 && r.data && Array.isArray(r.data.comments)) {
+      const list = r.data.comments;
+      serverCounts = r.data.counts || null;
+
+      state.all.clear();
+      for (const c of list) {
+        const id = c.id;
+        const rec = {
+          id,
+          nick: c.nick || 'Anonymous',
+          content: c.content || '',
+          created: Number(c.created || Date.now()),
+          top: c.top ? 1 : 0,
+          pid: c.pid || '',
+          rid: c.rid || '',
+          locked: !!c.locked
+        };
+        state.all.set(id, rec);
+      }
+      renderAll();
+      updateAdminUI();
+    } else if (r && r.message) {
+      setStatus(r.message, true);
+    }
   }catch(e){
-    setStatus(e?.message || 'Load failed', true);
+    setStatus(e?.message || 'Failed to load', true);
   }finally{
     loading = false;
   }
 }
 
-/* ===== Textarea helpers ===== */
-function insertAtCursor(el, text){
-  if (!el) return;
-  const start = el.selectionStart ?? el.value.length;
-  const end = el.selectionEnd ?? el.value.length;
-  const before = el.value.slice(0, start);
-  const after = el.value.slice(end);
-  el.value = before + text + after;
-  const pos = start + text.length;
-  el.selectionStart = el.selectionEnd = pos;
-  el.dispatchEvent(new Event('input', { bubbles: true }));
-}
+/* ===== Event delegation ===== */
+if (messagesEl && !messagesEl.dataset.boundMain) {
+  messagesEl.dataset.boundMain = '1';
+  messagesEl.addEventListener('click', async (e)=>{
+    const t = e.target;
+    if (!(t && t.classList && t.classList.contains('action'))) return;
+    const act = t.dataset.action;
+    const msgEl = t.closest('.msg');
+    if (!msgEl) return;
+    const cid = msgEl.getAttribute('data-id');
+    const rec = state.all.get(cid);
+    if (!rec) return;
 
-/* ===== Send / attach / embed ===== */
-function countImgsInHTML(html){ return (String(html||'').match(/<img\b[^>]*>/gi) || []).length; }
-function updateAttachAvailability(){
-  if (!btnAttach) return;
-  if (isAdmin){ btnAttach.disabled = false; return; }
-  const n = countImgsInHTML(textEl.value);
-  btnAttach.disabled = n >= 1;
-}
-
-/* NEW: react when a file is chosen */
-if (fileEl){
-  // Fallback in case the label's for= doesn't trigger click in some browsers
-  const btnChoose = $("btnChoose");
-  if (btnChoose && !btnChoose.dataset.bound){
-    btnChoose.dataset.bound = '1';
-    btnChoose.addEventListener('click', (e)=>{ if (fileEl) fileEl.click(); });
-  }
-
-  fileEl.addEventListener('change', ()=>{
-    const f = fileEl.files && fileEl.files[0];
-    if (!f){
-      if (fileInfo) fileInfo.textContent = "";
+    if (act === 'reply') {
+      replyTarget = rec;
+      replyName.textContent = rec.nick || 'Anonymous';
+      replyTo.style.display = 'flex';
+      updateAdminUI();
+      // expand the root thread locally for everyone in-session
+      const rootId = rec.rid ? rec.rid : rec.id;
+      expanded.add(rootId);
+      renderAllIncremental();
       return;
     }
-    const mb = (f.size/(1024*1024)).toFixed(2);
-    if (fileInfo) fileInfo.textContent = `${f.name} — ${mb} MB`;
-    if (!/^image\//i.test(f.type)){
-      setStatus('Not an image', true);
+
+    if (act === 'toggleReplies') {
+      const pid = t.dataset.parent || (rec.rid ? rec.rid : rec.id);
+      if (!pid) return;
+      if (expanded.has(pid)) expanded.delete(pid); else expanded.add(pid);
+      renderAllIncremental();
       return;
     }
-    if (f.size > MAX_FILE_MB*1024*1024){
-      setStatus(`Image too large (>${MAX_FILE_MB}MB)`, true);
+
+    if (act === 'adminDel') {
+      if (!isAdmin) return;
+      if (!armConfirmButton(t, 'Are you sure?', 3000)) return;
+      try{
+        const r = await api({ event:'COMMENT_DELETE_FOR_ADMIN', id: cid, url: PAGE_URL_PATH });
+        if (r && r.code === 0) { await loadLatest(true); setStatus('Deleted'); }
+        else setStatus(r?.message || 'Delete failed', true);
+      }catch(e){ setStatus(e?.message || 'Delete failed', true); }
       return;
     }
-    setStatus('Ready to attach');
+
+    if (act === 'adminPin') {
+      if (!isAdmin) return;
+      const wantPin = Number(rec.top) !== 1;
+      // inline confirm text
+      if (!armConfirmButton(t, wantPin ? 'Are you sure?' : 'Are you sure?', 3000)) return;
+      try{
+        const r = await api({ event:'COMMENT_SET_FOR_ADMIN', id: cid, url: PAGE_URL_PATH, set: { top: wantPin } });
+        if (r && r.code === 0) { await loadLatest(true); setStatus(wantPin?'Pinned':'Unpinned'); }
+        else setStatus(r?.message || 'Pin failed', true);
+      }catch(e){ setStatus(e?.message || 'Pin failed', true); }
+      return;
+    }
+
+    if (act === 'adminLock') {
+      if (!isAdmin) return;
+      const rootId = rec.rid ? rec.rid : rec.id;
+      const thread = state.all.get(rootId);
+      const locked = !!(thread && thread.locked);
+      if (!armConfirmButton(t, locked ? 'Are you sure?' : 'Are you sure?', 3000)) return;
+      try{
+        const r = await api({ event:'COMMENT_TOGGLE_LOCK_FOR_ADMIN', id: rootId, url: PAGE_URL_PATH, lock: !locked });
+        if (r && r.code === 0) { await loadLatest(true); setStatus(!locked?'Locked replies':'Unlocked replies'); }
+        else setStatus(r?.message || 'Lock toggle failed', true);
+      }catch(e){ setStatus(e?.message || 'Lock toggle failed', true); }
+      return;
+    }
   });
 }
 
-async function doSend(){
-  const nick = (nickEl?.value || '').trim().slice(0,10) || 'Anonymous';
-  let content = (textEl?.value || '').trim();
-  if (!content) return setStatus('Nothing to send', true);
-
-  if (!isAdmin && countImgsInHTML(content) > 1) {
-    return setStatus('Only one image allowed per message', true);
-  }
-
-  const payload = { event:'COMMENT_CREATE', url: PAGE_URL_PATH, nick, content };
-  if (replyTarget && replyTarget.rid) {
-    payload.pid = replyTarget.pid;
-    payload.rid = replyTarget.rid;
-  }
-
-  setStatus('Sending…');
-  const res = await api(payload);
-  if (res?.code === 0) {
-    textEl.value = '';
-    updateAttachAvailability();
-    setStatus('Sent');
-    if (isAdmin && sendAutoPinEl && sendAutoPinEl.checked && res?.data?.id) {
-      try { await api({ event:'COMMENT_SET_FOR_ADMIN', id: res.data.id, url: PAGE_URL_PATH, set:{ top: true } }); } catch {}
+/* Reorder handler (Pin ↑ / Pin ↓) */
+if (messagesEl && !messagesEl.dataset.boundReorder) {
+  messagesEl.dataset.boundReorder = '1';
+  messagesEl.addEventListener('click', async (e) => {
+    const t = e.target;
+    if (!(t && t.classList && t.classList.contains('action'))) return;
+    const act = t.dataset.action;
+    if (act !== 'pinUp' && act !== 'pinDown') return;
+    e.preventDefault();
+    const msgEl = t.closest('.msg');
+    const cid = msgEl && msgEl.getAttribute('data-id');
+    if (!cid) return;
+    try {
+      await movePinned(cid, act === 'pinUp' ? -1 : +1);
+    } catch (err) {
+      setStatus(err && err.message ? err.message : 'Failed to reorder pins', true);
     }
-  } else {
-    setStatus(res?.message || 'Send failed', true);
-  }
+  });
 }
 
-async function doAttach(){
-  const f = fileEl?.files?.[0];
-  if (!f) { setStatus('No file selected', true); return; }
-  if (!/^image\//i.test(f.type)) return setStatus('Not an image', true);
-  const sizeMb = f.size / (1024*1024);
-  if (sizeMb > MAX_FILE_MB) return setStatus(`Image too large (>${MAX_FILE_MB}MB)`, true);
-
-  setStatus('Uploading…');
-  const dataURL = await new Promise((res,rej)=>{ const fr = new FileReader(); fr.onerror=()=>rej(fr.error); fr.onload=()=>res(fr.result); fr.readAsDataURL(f); });
-  const r = await api({ event:'UPLOAD_IMAGE', photo: String(dataURL) });
-  if (r?.code === 0 && r?.data?.url) {
-    const tag = `<img src="${r.data.url}">`;
-    insertAtCursor(textEl, (textEl.value ? '\n' : '') + tag);
-    // clear selection so picking same file again still triggers change
-    fileEl.value = '';
-    if (fileInfo) fileInfo.textContent = '';
-    updateAttachAvailability();
-    setStatus('Image attached');
-  } else {
-    setStatus(r?.message || 'Upload failed', true);
-  }
+/* Reply cancel */
+if (replyCancel && !replyCancel.dataset.bound) {
+  replyCancel.dataset.bound = '1';
+  replyCancel.addEventListener('click', ()=>{ replyTarget=null; replyTo.style.display='none'; updateAdminUI(); });
 }
 
-/* NEW: inline embed UI */
-function setEmbedModeUI(){
-  if (!embedModeEl) return;
-  const m = embedModeEl.value;
-  if (embedUrlEl)  embedUrlEl.style.display  = (m === 'url')  ? 'block' : 'none';
-  if (embedHtmlEl) embedHtmlEl.style.display = (m === 'html') ? 'block' : 'none';
+/* ===== Login / Logout ===== */
+if (btnAdminLogin && !btnAdminLogin.dataset.bound) {
+  btnAdminLogin.dataset.bound = '1';
+  btnAdminLogin.addEventListener('click', async ()=>{
+    const pw = (adminPass && adminPass.value) || '';
+    if (!pw) { setStatus('Enter admin password', true); return; }
+    setStatus('Signing in…');
+    try{
+      const r = await api({ event:'LOGIN', password: pw });
+      if (r && r.code === 0 && r.accessToken) {
+        TK_TOKEN = r.accessToken; localStorage.setItem('twikoo_access_token', TK_TOKEN);
+        setStatus('Signed in'); await refreshAdminStatus(); await loadLatest(true);
+      } else { setStatus(r?.message || 'Login failed', true); }
+    }catch(e){ setStatus(e?.message || 'Login failed', true); }
+  });
 }
-if (embedModeEl && !embedModeEl.dataset.bound){
+if (btnAdminLogout && !btnAdminLogout.dataset.bound) {
+  btnAdminLogout.dataset.bound = '1';
+  btnAdminLogout.addEventListener('click', async ()=>{
+    TK_TOKEN = null; localStorage.removeItem('twikoo_access_token'); localStorage.removeItem('twikoo_is_admin');
+    isAdmin = false; await refreshAdminStatus(); await loadLatest(true);
+  });
+}
+
+/* ===== Embed UI (admin only) ===== */
+if (embedModeEl && !embedModeEl.dataset.bound) {
   embedModeEl.dataset.bound = '1';
-  embedModeEl.addEventListener('change', setEmbedModeUI);
-  setEmbedModeUI();
+  embedModeEl.addEventListener('change', ()=>{
+    const mode = embedModeEl.value;
+    embedUrlEl.style.display = (mode === 'url') ? 'block' : 'none';
+    embedHtmlEl.style.display = (mode === 'html') ? 'block' : 'none';
+  });
 }
-if (btnEmbedInsert && !btnEmbedInsert.dataset.bound){
+if (btnEmbedInsert && !btnEmbedInsert.dataset.bound) {
   btnEmbedInsert.dataset.bound = '1';
   btnEmbedInsert.addEventListener('click', ()=>{
-    if (!isAdmin) { setStatus('Embed is admin-only', true); return; }
-    const mode = embedModeEl ? embedModeEl.value : 'url';
-    let snippet = '';
+    if (!isAdmin) return;
+    const mode = embedModeEl.value;
     if (mode === 'url') {
-      const u = (embedUrlEl?.value || '').trim();
-      if (!/^https?:\/\//i.test(u)) { setStatus('Enter a valid URL (http/https)', true); return; }
-      snippet =
-        `<iframe src="${u}" width="560" height="315" ` +
-        `sandbox="allow-scripts allow-same-origin" referrerpolicy="no-referrer" title="Embedded content"></iframe>`;
+      const u = (embedUrlEl.value || '').trim();
+      if (!u) { setStatus('Enter a URL to embed', true); return; }
+      const html = `<iframe src="${u}" width="560" height="315" sandbox="allow-scripts allow-same-origin" referrerpolicy="no-referrer" title="Embedded content"></iframe>`;
+      textEl.value = (textEl.value + (textEl.value.trim()?'\n':'') + html).trim();
     } else {
-      const raw = embedHtmlEl?.value || '';
-      const esc = raw.replace(/<\/(script)/gi, '&lt;/$1'); // basic guard
-      snippet =
-        `<iframe srcdoc="${esc.replace(/"/g,'&quot;')}" width="560" height="315" ` +
-        `sandbox="allow-scripts allow-same-origin" referrerpolicy="no-referrer" title="Embedded HTML"></iframe>`;
+      const raw = embedHtmlEl.value || '';
+      if (!raw.trim()) { setStatus('Enter HTML to embed', true); return; }
+      textEl.value = (textEl.value + (textEl.value.trim()?'\n':'') + raw).trim();
     }
-    insertAtCursor(textEl, (textEl.value ? '\n' : '') + snippet + '\n');
+    updateCharCount();
     setStatus('Embed inserted');
   });
 }
 
-/* ===== Events ===== */
-if (btnAdminLogin) btnAdminLogin.addEventListener('click', async ()=>{
-  const password = adminPass.value || '';
-  if (!password) return setStatus("Enter password", true);
-  setStatus('Logging in…');
-  const r = await api({ event:'LOGIN', password });
-  if (r?.accessToken) {
-    TK_TOKEN = r.accessToken; localStorage.setItem('twikoo_access_token', TK_TOKEN);
-    await refreshAdminStatus(); await loadLatest(true);
-    setStatus('Logged in');
-  } else {
-    setStatus(r?.message || 'Login failed', true);
-  }
-});
-if (btnAdminLogout) btnAdminLogout.addEventListener('click', ()=>{
-  localStorage.removeItem('twikoo_access_token');
-  localStorage.removeItem('twikoo_is_admin');
-  TK_TOKEN = null; isAdmin = false;
-  refreshAdminStatus();
-});
+/* ===== Send ===== */
+if (btnSend && !btnSend.dataset.bound) {
+  btnSend.dataset.bound = '1';
+  btnSend.addEventListener('click', async ()=>{
+    const nick = isAdmin ? "Poly Track Administrator" : (nickEl.value || '').trim().slice(0,10) || 'Anonymous';
+    let content = (textEl.value || '').trim();
+    if (!content) { setStatus('Type a message', true); return; }
+    if (content.length > MAX_CHARS) { setStatus(`Too long (>${MAX_CHARS})`, true); return; }
+    if (!isAdmin && !allowPosts) { setStatus('Only admin can post right now', true); return; }
 
-if (btnSend) btnSend.addEventListener('click', doSend);
-if (btnAttach) btnAttach.addEventListener('click', doAttach);
-if (textEl) textEl.addEventListener('input', ()=>{
-  const n = (textEl.value||'').length;
-  if (charCount) charCount.textContent = String(n);
-  updateAttachAvailability();
-});
+    const pid = replyTarget ? (replyTarget.pid || "") : "";
+    const rid = replyTarget ? (replyTarget.rid || replyTarget.id || "") : "";
 
-if (replyCancel) replyCancel.addEventListener('click', ()=>{
-  replyTarget = null;
-  replyTo.style.display='none';
-  updateAdminUI();
-});
+    setStatus('Sending…');
+    try{
+      const r = await api({ event:'COMMENT_CREATE', url: PAGE_URL_PATH, nick, content, pid, rid });
+      if (r && r.code === 0 && r.data && r.data.id) {
+        const newId = r.data.id;
 
-if (messagesEl) messagesEl.addEventListener('click', async (e)=>{
-  const t = e.target.closest('.action'); if (!t) return;
-  const act = t.dataset.action;
+        // admin-only extras for root posts
+        if (isAdmin && !replyTarget) {
+          // auto pin
+          if (sendAutoPinEl && sendAutoPinEl.checked) {
+            const r1 = await api({ event:'COMMENT_SET_FOR_ADMIN', id: newId, url: PAGE_URL_PATH, set:{ top:true } });
+            if (!(r1 && r1.code === 0)) setStatus(r1?.message || 'Auto-pin failed', true);
+          }
+          // no replies => immediately lock this thread
+          if (allowReplies && sendNoReplyEl && sendNoReplyEl.checked) {
+            const r2 = await api({ event:'COMMENT_TOGGLE_LOCK_FOR_ADMIN', id: newId, url: PAGE_URL_PATH, lock:true });
+            if (!(r2 && r2.code === 0)) setStatus(r2?.message || 'Lock failed', true);
+          }
+        }
 
-  if (act === 'reply') {
-    const msg = t.closest('.msg'); if (!msg) return;
-    const id = msg.getAttribute('data-id'); const root = msg.getAttribute('data-root') === '1';
-    const c = state.all.get(id); if (!c) return;
-    replyTarget = root ? { pid: c.id, rid: c.id, nick: c.nick } : { pid: c.pid, rid: c.rid, nick: c.nick };
-    replyName.textContent = replyTarget.nick || 'Anonymous';
-    replyTo.style.display='flex';
-    updateAdminUI();
-    return;
-  }
+        // If replying, make sure thread opens for this session
+        if (replyTarget) {
+          const rootId = replyTarget.rid ? replyTarget.rid : replyTarget.id;
+          if (rootId) expanded.add(rootId);
+        }
 
-  if (act === 'toggleReplies') {
-    const parent = t.dataset.parent;
-    if (expanded.has(parent)) expanded.delete(parent); else expanded.add(parent);
-    renderAllIncremental();
-    return;
-  }
+        textEl.value=''; fileEl.value=''; fileInfo.textContent='';
+        replyTarget=null; replyTo.style.display='none';
+        updateCharCount(); setStatus('Sent');
+        await loadLatest(true);
+      } else {
+        setStatus(r?.message || 'Send failed', true);
+      }
+    }catch(e){
+      setStatus(e?.message || 'Send failed', true);
+    }
+  });
+}
 
-  if (act === 'adminPin') {
-    if (!isAdmin) return;
-    const cid = t.dataset.cid; if (!cid) return;
-    const root = state.all.get(cid); if (!root) return;
-    const want = !(Number(root.top)===1);
-    if (!armConfirmButton(t, want ? 'Pin this?' : 'Unpin this?')) return;
-    await api({ event:'COMMENT_SET_FOR_ADMIN', id: cid, url: PAGE_URL_PATH, set:{ top: want } });
-    return;
-  }
-
-  if (act === 'adminLock') {
-    if (!isAdmin) return;
-    const cid = t.dataset.cid; if (!cid) return;
-    const root = state.all.get(cid); if (!root) return;
-    const locked = !!root.locked;
-    if (!armConfirmButton(t, locked ? 'Unlock replies?' : 'Lock replies?')) return;
-    await api({ event:'COMMENT_TOGGLE_LOCK_FOR_ADMIN', id: cid, url: PAGE_URL_PATH, lock: !locked });
-    return;
-  }
-
-  if (act === 'adminDel') {
-    if (!isAdmin) return;
-    const cid = t.dataset.cid; if (!cid) return;
-    if (!armConfirmButton(t, 'Delete this?')) return;
-    await api({ event:'COMMENT_DELETE_FOR_ADMIN', id: cid, url: PAGE_URL_PATH });
-    return;
-  }
-
-  if (act === 'pinUp')   { const id = t.dataset.cid; if (id) movePinned(id, -1); return; }
-  if (act === 'pinDown') { const id = t.dataset.cid; if (id) movePinned(id, +1); return; }
-});
-
-/* ===== Startup ===== */
-document.addEventListener('DOMContentLoaded', async () => {
-  try { connectWS(); } catch {}
-  try { await checkConnection(); } catch {}
-  try { await refreshAdminStatus(); } catch {}
-  try { await loadLatest(true); } catch {}
-  try { updateAttachAvailability(); } catch {}
-});
+/* ===== Init ===== */
+(async function init(){
+  updateCharCount();
+  await checkConnection();
+  await refreshAdminStatus();
+  await loadLatest(true);
+  window.addEventListener('focus', ()=>{ try{ if (!ws || ws.readyState>1) connectWS(); }catch{} });
+})();
