@@ -549,15 +549,15 @@ function renderOne(c, depth=0){
     actions.appendChild(del);
   }
 
-  bubble.appendChild(actions);
-  msg.appendChild(bubble);
+bubble.appendChild(actions);
+msg.appendChild(bubble);
 
-  // replies container
-  const repliesWrap = document.createElement('div'); repliesWrap.className='replies';
-  if (expanded.has(c.id)) repliesWrap.style.display='flex';
-  msg.appendChild(repliesWrap);
-
-  // animate admin text if needed
+// replies container (must be inside the bubble so it stacks below content)
+const repliesWrap = document.createElement('div');
+repliesWrap.className = 'replies';
+if (expanded.has(c.id)) repliesWrap.style.display = 'flex';
+bubble.appendChild(repliesWrap);
+// animate admin text if needed
   maybeAnimateMessage(c, body);
 
   return { el: msg, repliesWrap };
