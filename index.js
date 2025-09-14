@@ -115,6 +115,35 @@ const setStatus=(t,isError=false)=>{
   statusEl.style.color = isError ? "var(--danger)" : "var(--muted)";
 };
 
+// Inline two-step confirmation for admin actions (replaces alert/confirm)
+function armConfirmButton(btn, label = 'Are you sure?', ms = 3000){
+  if (!btn) return false;
+  if (btn.dataset.confirm === '1') {
+    // Second click: proceed and reset appearance
+    const tid = Number(btn.dataset.confirmTimer || 0);
+    if (tid) clearTimeout(tid);
+    btn.dataset.confirm = '0';
+    if (btn.dataset.origText) btn.textContent = btn.dataset.origText;
+    btn.style.color = '';
+    btn.style.borderColor = '';
+    return true;
+  }
+  // First click: arm confirmation state
+  btn.dataset.confirm = '1';
+  if (!btn.dataset.origText) btn.dataset.origText = btn.textContent || '';
+  btn.textContent = label;
+  btn.style.color = 'var(--danger)';
+  btn.style.borderColor = 'var(--danger)';
+  const tid = setTimeout(() => {
+    btn.dataset.confirm = '0';
+    if (btn.dataset.origText) btn.textContent = btn.dataset.origText;
+    btn.style.color = '';
+    btn.style.borderColor = '';
+  }, ms);
+  btn.dataset.confirmTimer = String(tid);
+  return false;
+}
+
 function fileToDataURL(file){ return new Promise((res,rej)=>{ const fr=new FileReader(); fr.onerror=()=>rej(fr.error||new Error("FileReader error")); fr.onload=()=>res(fr.result); fr.readAsDataURL(file); }); }
 function insertAtCursor(el,text){ const s=el.selectionStart??el.value.length, e=el.selectionEnd??el.value.length; el.value=el.value.slice(0,s)+text+el.value.slice(e); const pos=s+text.length; el.setSelectionRange(pos,pos); el.focus(); }
 function truthy(v){ return v === true || v === 1 || v === '1' || v === 'true'; }
@@ -842,8 +871,8 @@ messagesEl.addEventListener('click', async (e)=>{
       const c = state.all.get(cid);
       const isPinnedRoot = c && (c.rid || '') === '' && Number(c.top) === 1;
       if (isPinnedRoot) {
-        const sure = window.confirm("Delete pinned message?\nThis will remove the thread and all its replies.");
-        if (!sure) return;
+        // First click turns the button red and asks inline; second click proceeds
+        if (!armConfirmButton(t, 'Are you sure?')) return;
       }
     }
     try{
@@ -857,19 +886,12 @@ messagesEl.addEventListener('click', async (e)=>{
   if (t.dataset.action === 'adminPin'){
     try{
       const c = state.all.get(cid);
-      if (Number(c?.top || 0) === 1) {
-        const wantTop = false;
-        const isRoot = (c.rid || '') === '';
-        if (isRoot && !wantTop) {
-          const sure = window.confirm("Unpin this message?");
-          if (!sure) return;
-        }
-      }
-      const wantTop = !(Number(c?.top||0) === 1);
-      // If currently pinned and we're about to unpin, confirm (root only)
-      if (!wantTop && (c && (c.rid || '') === '' && Number(c.top) === 1)) {
-        const sure = window.confirm("Unpin this message?");
-        if (!sure) return;
+      const isRoot = c && (c.rid || '') === '';
+      const currentlyPinned = Number(c?.top || 0) === 1;
+      const wantTop = !currentlyPinned;
+      // If currently pinned and we're about to unpin (root only), ask inline
+      if (currentlyPinned && !wantTop && isRoot) {
+        if (!armConfirmButton(t, 'Are you sure?')) return;
       }
       const r = await api({ event:'COMMENT_SET_FOR_ADMIN', id: cid, url: PAGE_URL_PATH, set: { top: wantTop }});
       if (r?.code === 0) setStatus(wantTop ? 'Pinned' : 'Unpinned');
@@ -885,8 +907,7 @@ messagesEl.addEventListener('click', async (e)=>{
       const rootObj = state.all.get(rootId);
       const wantLock = !(rootObj && rootObj.locked);
       if (!wantLock && rootObj && (rootObj.rid || '') === '' && Number(rootObj.top) === 1) {
-        const sure = window.confirm("Unlock replies for this pinned message?");
-        if (!sure) return;
+        if (!armConfirmButton(t, 'Are you sure?')) return;
       }
       const r = await api({ event:'COMMENT_TOGGLE_LOCK_FOR_ADMIN', id: rootId, url: PAGE_URL_PATH, lock: wantLock });
       if (r?.code === 0) setStatus(wantLock ? 'Replies locked' : 'Replies unlocked');
