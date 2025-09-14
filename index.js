@@ -75,10 +75,30 @@ function connectWS(){
       try { await loadLatest(true); } catch {}
     };
     ws.onmessage = (e) => {
-      if (typeof e.data === 'string') {
-        if (e.data === 'pong') return;
-        try { const msg = JSON.parse(e.data); if (msg && msg.type === "refresh") doRefresh(); }
-        catch { doRefresh(); }
+      if (typeof e.data !== 'string') return;
+      if (e.data === 'pong') return;
+      const doRefresh = async () => {
+        try { await refreshAdminStatus(); } catch {}
+        try { await loadLatest(true); } catch {}
+      };
+      try {
+        const msg = JSON.parse(e.data);
+        if (!msg) return doRefresh();
+        if (msg.type === 'new-reply' && msg.rootId) {
+          const rid = String(msg.rootId);
+          expanded.add(rid);
+          // If the root is already in the DOM, open its replies immediately
+          const rootMsg = messagesEl && messagesEl.querySelector(`.msg[data-id="${rid}"]`);
+          if (rootMsg) {
+            const wrap = rootMsg.querySelector(':scope > .bubble > .replies');
+            if (wrap) setRepliesVisibility(wrap, true);
+          }
+          doRefresh();
+        } else {
+          doRefresh();
+        }
+      } catch {
+        doRefresh();
       }
     };
     ws.onclose = ws.onerror = () => {
@@ -669,15 +689,10 @@ function renderAllIncremental(){
   if (!messagesEl) return;
   clearMessages();
 
-  // determine which roots should be expanded (auto-open if child count increased)
+  // Replies are hidden by default; do not auto-open on count change.
   for (const r of state.roots){
     const childCount = (state.childrenByRoot.get(r.id)||[]).length;
-    if (!seededChildCounts) prevChildCounts.set(r.id, childCount);
-    else {
-      const prev = prevChildCounts.get(r.id) || 0;
-      if (childCount > prev) expanded.add(r.id);
-      prevChildCounts.set(r.id, childCount);
-    }
+    prevChildCounts.set(r.id, childCount);
   }
   seededChildCounts = true;
 
