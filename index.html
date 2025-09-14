@@ -119,6 +119,15 @@
     .content{margin-top:6px;line-height:1.58;word-wrap:break-word; position:relative}
     .content img{max-width:480px;border-radius:10px;border:1px solid var(--border);display:block;margin:8px 0;background:#fafafa}
 
+    /* Replying-to line */
+    .replying-to{
+      font-size:12px;
+      color:var(--muted);
+      margin-bottom:4px;
+      padding-left:6px;
+      border-left:2px solid #eceff3;
+    }
+
     /* Actions */
     .actions{display:flex;gap:14px;align-items:center;margin-top:8px;flex-wrap:wrap}
     .action{
@@ -128,8 +137,9 @@
     }
     .action:hover{background:#f8f8f8}
 
-    /* Replies container (FIX: no `display:flex` override here) */
-    .replies{display:none; margin-top:10px; padding-left:0; flex-direction:column; gap:10px}
+    /* Replies container: indent each thread level. Since replies are nested,
+       this margin accumulates (52px per depth). */
+    .replies{display:none; margin-top:10px; margin-left:52px; padding-left:0; flex-direction:column; gap:10px}
 
     /* Load older */
     #loadMore{
@@ -312,6 +322,6 @@
     </section>
   </main>
 
-<script src="index.js?v=28"></script>
+<script src="index.js?v=38"></script>
 </body>
 </html>

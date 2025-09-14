@@ -1,12 +1,12 @@
-/* Poly Track Chatboard – index.js (v37)
-   Fixes in this build (no other behavior intentionally changed):
-   - Replies render inside the bubble, indented per depth (reply-of-reply indents further).
-   - Embeds render for **all** viewers (admin-only to insert, but visible to everyone).
-   - Custom HTML embed now wraps into a sandboxed <iframe srcdoc="..."> and displays correctly.
-   - Avatar never becomes the content image (always initials; admin keeps special avatar).
-   - Preserves prior features: pin reorder ▲/▼, admin shimmer/fade, session auto-open, WS live updates.
+/* Poly Track Chatboard – index.js (v38)
+   Fixes:
+   - Show “Replying to …” on replies; nested replies indent under parent.
+   - Admin can reply even when global replies are off (and it actually replies).
+   - Admin avatar is fixed "</>" (never replaced by message images).
+   - Pinned admin messages animate only once per page load, unless a new pin appears.
+   - Keeps previous features intact (pin reorder, two-tap confirms, live updates, etc).
 */
-console.log("chatboard.index.js v37");
+console.log("chatboard.index.js v38");
 
 /* ===== Constants ===== */
 const WORKER_URL    = "https://twikoo-cloudflare.ertertertet07.workers.dev";
@@ -111,6 +111,7 @@ let isAdmin = false;
 let rateBlockedUntil = 0;
 let allowReplies = true;
 let allowPosts = true;
+const sessionAnimatedPinned = new Set();      // animate each pinned admin message only once per reload
 
 /* ===== UI helpers ===== */
 if (limitMbEl) limitMbEl.textContent=MAX_FILE_MB;
@@ -128,15 +129,6 @@ function truthy(v){ return v === true || v === 1 || v === '1' || v === 'true'; }
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 function parseRetryAfter(h){ if (!h) return 0; const n = Number(h); if (!Number.isNaN(n)) return Date.now() + n*1000; const d = Date.parse(h); return Number.isNaN(d) ? 0 : d; }
 function authorIsAdmin(c){ return String((c && c.nick) || '') === 'Poly Track Administrator'; }
-
-/* Small helper to escape raw HTML for iframe srcdoc */
-function escapeForSrcdoc(html){
-  return String(html)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
 
 /* Inline confirm helper (two-tap) */
 function armConfirmButton(btn, label = 'Are you sure?', ms = 3000){
@@ -233,7 +225,9 @@ function updateAdminUI(){
 
   if (embedBox) embedBox.style.display = isAdmin ? 'flex' : 'none';
 
-  if (!allowReplies) { replyTarget = null; if (replyTo) replyTo.style.display = 'none'; }
+  // IMPORTANT: do NOT clear admin's replyTarget when replies are globally off
+  if (!allowReplies && !isAdmin) { replyTarget = null; if (replyTo) replyTo.style.display = 'none'; }
+
   updateSendButtonUI();
   try { renderAllIncremental(); } catch {}
 }
@@ -301,10 +295,7 @@ function bindAdminTogglesOnce(){
 
 /* ===== Content rendering ===== */
 function renderSafeContent(input, opts = {}){
-  const allowLinks = !!opts.allowLinks; 
-  // NOTE: now always true so everyone can VIEW embeds (still admin-only to insert).
-  const allowEmbeds = true; 
-  const text = String(input ?? "");
+  const allowLinks = !!opts.allowLinks; const allowEmbeds = !!opts.allowEmbeds; const text = String(input ?? "");
   const tpl = document.createElement('template'); tpl.innerHTML = text.replace(/\n/g, '<br>');
   const wrap = document.createElement('div'); wrap.style.position = 'relative';
   let textSpan = null;
@@ -314,8 +305,8 @@ function renderSafeContent(input, opts = {}){
       textSpan = document.createElement('span');
       textSpan.className = 'glow-target';
       textSpan.style.whiteSpace = 'pre-wrap';
-      textSpan.style.position = 'relative';    // anchor for overlay
-      textSpan.style.display = 'inline-block'; // ensure overlay spans multi-line height
+      textSpan.style.position = 'relative';
+      textSpan.style.display = 'inline-block';
       textSpan.style.verticalAlign = 'baseline';
     }
     return textSpan;
@@ -327,56 +318,10 @@ function renderSafeContent(input, opts = {}){
     if (node.nodeType === Node.ELEMENT_NODE) {
       const tag = node.tagName.toLowerCase();
       if (tag === 'br') { ensureTextSpan().appendChild(document.createElement('br')); return; }
-      if (tag === 'img') { 
-        flushTextSpan(); 
-        const src = node.getAttribute('src') || ''; 
-        if (/^data:image\/.+|^https?:\/\//i.test(src)) { 
-          const img = document.createElement('img'); 
-          img.src = src; img.alt = node.getAttribute('alt') || ''; 
-          img.loading='lazy'; img.decoding='async'; 
-          wrap.appendChild(img); 
-        } else { pushText('[blocked image]'); flushTextSpan(); } 
-        return; 
-      }
-      if (tag === 'a') { 
-        const href = node.getAttribute('href') || ''; const txt = node.textContent || href; 
-        if (allowLinks && isHttp(href)) { 
-          const a = document.createElement('a'); 
-          a.href = href; a.target = '_blank'; a.rel = 'noopener noreferrer nofollow'; 
-          a.textContent = txt; 
-          flushTextSpan(); 
-          wrap.appendChild(a); 
-        } else { pushText(txt); } 
-        return; 
-      }
-      if (allowEmbeds && tag === 'iframe') { 
-        flushTextSpan(); 
-        const hasSrcdoc = node.hasAttribute('srcdoc'); 
-        const src = node.getAttribute('src') || ''; 
-        if (hasSrcdoc || isHttp(src)) { 
-          const f = document.createElement('iframe'); 
-          if (hasSrcdoc) f.setAttribute('srcdoc', node.getAttribute('srcdoc') || ''); 
-          else f.src = src; 
-          f.loading='lazy'; 
-          f.referrerPolicy='no-referrer'; 
-          f.title=node.getAttribute('title')||'Embedded content'; 
-          f.width=node.getAttribute('width')||'560'; 
-          f.height=node.getAttribute('height')||'315'; 
-          f.setAttribute('sandbox','allow-scripts allow-same-origin'); 
-          wrap.appendChild(f); 
-        } else { pushText('[blocked iframe]'); flushTextSpan(); } 
-        return; 
-      }
-      if (allowEmbeds && tag === 'video') { 
-        flushTextSpan(); 
-        const src = node.getAttribute('src') || ''; 
-        if (isHttp(src) && isDirectVideo(src)) { 
-          const v = document.createElement('video'); 
-          v.src=src; v.controls=true; v.preload='metadata'; v.style.maxWidth='480px'; 
-          wrap.appendChild(v); 
-        } else { pushText('[blocked video]'); flushTextSpan(); } 
-        return; 
-      }
+      if (tag === 'img') { flushTextSpan(); const src = node.getAttribute('src') || ''; if (/^data:image\/.+|^https?:\/\//i.test(src)) { const img = document.createElement('img'); img.src = src; img.alt = node.getAttribute('alt') || ''; img.loading='lazy'; img.decoding='async'; wrap.appendChild(img); } else { pushText('[blocked image]'); flushTextSpan(); } return; }
+      if (tag === 'a') { const href = node.getAttribute('href') || ''; const txt = node.textContent || href; if (allowLinks && isHttp(href)) { const a = document.createElement('a'); a.href = href; a.target = '_blank'; a.rel = 'noopener noreferrer nofollow'; a.textContent = txt; flushTextSpan(); wrap.appendChild(a); } else { pushText(txt); } return; }
+      if (allowEmbeds && tag === 'iframe') { flushTextSpan(); const hasSrcdoc = node.hasAttribute('srcdoc'); const src = node.getAttribute('src') || ''; if (hasSrcdoc || isHttp(src)) { const f = document.createElement('iframe'); if (hasSrcdoc) f.setAttribute('srcdoc', node.getAttribute('srcdoc') || ''); else f.src = src; f.loading='lazy'; f.referrerPolicy='no-referrer'; f.title=node.getAttribute('title')||'Embedded content'; f.width=node.getAttribute('width')||'560'; f.height=node.getAttribute('height')||'315'; f.setAttribute('sandbox','allow-scripts allow-same-origin'); wrap.appendChild(f); } else { pushText('[blocked iframe]'); flushTextSpan(); } return; }
+      if (allowEmbeds && tag === 'video') { flushTextSpan(); const src = node.getAttribute('src') || ''; if (isHttp(src) && isDirectVideo(src)) { const v = document.createElement('video'); v.src=src; v.controls=true; v.preload='metadata'; v.style.maxWidth='480px'; wrap.appendChild(v); } else { pushText('[blocked video]'); flushTextSpan(); } return; }
       // fallback
       pushText(node.textContent || '');
     }
@@ -391,7 +336,6 @@ function createGlowOverlayOn(targetEl){
   const prev = targetEl.querySelector(':scope > .glow-overlay'); if (prev) prev.remove();
   const txt = targetEl.textContent || ''; if (!txt.trim()) return null;
   const ov = document.createElement('span'); ov.className = 'glow-overlay'; ov.textContent = txt;
-  // Ensure overlay inherits font metrics for pixel-perfect alignment
   ov.style.font = getComputedStyle(targetEl).font;
   targetEl.appendChild(ov); ov.style.setProperty('--glow-ol-opacity', '1'); return ov;
 }
@@ -436,37 +380,29 @@ function buildActionsFor(c){
     if (isRoot){
       const pinBtn = document.createElement('span'); pinBtn.className='action'; pinBtn.dataset.action='adminPin'; pinBtn.dataset.cid=cid; pinBtn.textContent = Number(c.top)===1 ? 'Unpin' : 'Pin'; actions.appendChild(pinBtn);
 
-      // Reorder arrows when pinned
       if (Number(c.top)===1){
         const up = document.createElement('span'); up.className='action'; up.dataset.action='pinUp'; up.dataset.cid=cid; up.textContent='▲'; actions.appendChild(up);
         const down = document.createElement('span'); down.className='action'; down.dataset.action='pinDown'; down.dataset.cid=cid; down.textContent='▼'; actions.appendChild(down);
       }
 
-      // Lock/unlock replies for thread
       const lockBtn = document.createElement('span'); lockBtn.className='action'; lockBtn.dataset.action='lockToggle'; lockBtn.dataset.cid=rootIdForLock; lockBtn.textContent = threadLocked ? 'Unlock replies' : 'Lock replies'; actions.appendChild(lockBtn);
     }
   }
   return actions;
 }
 
-/* ===== Build one message node (depth-aware) ===== */
-function buildMessage(c, depth = 0){
-  const wrap = document.createElement('div'); 
-  wrap.className='msg'; 
-  wrap.dataset.id=c.id; 
-  wrap.dataset.rid=c.rid||''; 
-  wrap.dataset.top=String(Number(c.top||0));
-  if (Number(c.top)===1 && (c.rid||'')===''){ 
-    const badge=document.createElement('span'); 
-    badge.className='pin-badge'; 
-    badge.textContent='Pinned'; 
-    wrap.appendChild(badge); 
-  }
+/* ===== Build one message node ===== */
+function buildMessage(c){
+  const wrap = document.createElement('div'); wrap.className='msg'; wrap.dataset.id=c.id; wrap.dataset.rid=c.rid||''; wrap.dataset.top=String(Number(c.top||0));
+  if (Number(c.top)===1 && (c.rid||'')===''){ const badge=document.createElement('span'); badge.className='pin-badge'; badge.textContent='Pinned'; wrap.appendChild(badge); }
 
   const avatar = document.createElement('div'); 
-  avatar.className='avatar' + (authorIsAdmin(c) ? ' admin' : '');
-  // Never use content image as avatar; always initials
-  avatar.textContent = initialOf(c.nick);
+  avatar.className = 'avatar' + (authorIsAdmin(c) ? ' admin' : '');
+  if (authorIsAdmin(c)) {
+    avatar.textContent = "</>";
+  } else {
+    avatar.textContent = initialOf(c.nick);
+  }
 
   const bubble = document.createElement('div'); bubble.className='bubble';
   const meta = document.createElement('div'); meta.className='meta';
@@ -475,15 +411,26 @@ function buildMessage(c, depth = 0){
   meta.appendChild(nick); meta.appendChild(when);
 
   const body = document.createElement('div'); body.className='content';
-  const safe = renderSafeContent(c.content, { allowLinks:true, allowEmbeds:true });
+
+  // Replying-to line (shows who the reply targets)
+  if ((c.rid || '') !== ''){
+    const parent = state.all.get(c.pid || c.rid);
+    const who = parent ? (parent.nick || 'Anonymous') : 'thread';
+    const replyLine = document.createElement('div');
+    replyLine.className = 'replying-to';
+    replyLine.textContent = `↪ Replying to ${who}`;
+    body.appendChild(replyLine);
+  }
+
+  const safe = renderSafeContent(c.content, { allowLinks:true, allowEmbeds:isAdmin });
   body.appendChild(safe);
 
-  // Admin text animation rules:
+  // Admin text animation:
   if (authorIsAdmin(c)){
-    if (Number(c.top)===1 && (c.rid||'')===''){       // pinned admin -> always animate on render
-      applyOverlayGlowOnce(safe);
+    if (Number(c.top)===1 && (c.rid||'')===''){
+      // Pinned admin message: animate only once per pinned id per page load
+      if (!sessionAnimatedPinned.has(c.id)) { applyOverlayGlowOnce(safe); sessionAnimatedPinned.add(c.id); }
     } else {
-      // Only animate recent admin messages (<=5s old) with remainder timing
       const age = Date.now() - Number(c.created||0);
       if (age <= 5000) applyOverlayGlowRemainder(safe, c);
     }
@@ -494,15 +441,11 @@ function buildMessage(c, depth = 0){
 
   wrap.appendChild(avatar); wrap.appendChild(bubble);
 
-  // Replies container (append inside bubble; indent grows with depth)
+  // Replies container (nested inside bubble so indentation accumulates)
   if ((c.children?.length||0) > 0){
-    const rep = document.createElement('div'); 
-    rep.className='replies'; 
-    rep.dataset.parent=c.id;
-    // indent each level by 24px
-    rep.style.marginLeft = ((depth + 1) * 24) + 'px';
+    const rep = document.createElement('div'); rep.className='replies'; rep.dataset.parent=c.id;
     if (expanded.has(c.id)) rep.style.display='flex';
-    c.children.forEach(ch => { rep.appendChild(buildMessage(ch, depth + 1)); });
+    c.children.forEach(ch => { rep.appendChild(buildMessage(ch)); });
     bubble.appendChild(rep);
   }
   return wrap;
@@ -521,7 +464,7 @@ function asTree(comments){
 function renderAll(){
   if (!messagesEl) return;
   messagesEl.innerHTML = '';
-  state.roots.forEach(r => { messagesEl.appendChild(buildMessage(r, 0)); });
+  state.roots.forEach(r => { messagesEl.appendChild(buildMessage(r)); });
 }
 function renderAllIncremental(){ renderAll(); }
 
@@ -562,7 +505,7 @@ async function loadLatest(force=false){
   finally{ loading=false; }
 }
 
-/* ===== Send (auto pin + no-replies for admin on new root, with pin limit check) ===== */
+/* ===== Send (admin auto pin / no-reply) ===== */
 async function sendComment(){
   const nick = isAdmin ? 'Poly Track Administrator' : (nickEl?.value.trim().slice(0,10) || 'Anonymous');
   let content = (textEl?.value || '').trim();
@@ -594,16 +537,13 @@ async function sendComment(){
     // Post-submit admin actions for new root messages
     if (isAdmin && !isReplying && newId){
       try{
-        // No replies → lock the new thread
         if (sendNoReplyEl && sendNoReplyEl.checked){
           await api({ event:'COMMENT_TOGGLE_LOCK_FOR_ADMIN', id: newId, url: PAGE_URL_PATH, lock: true });
         }
-        // Auto pin → set top=1
         if (sendAutoPinEl && sendAutoPinEl.checked){
           await api({ event:'COMMENT_SET_FOR_ADMIN', id: newId, url: PAGE_URL_PATH, set:{ top: true } });
         }
       }catch(e){
-        // Show error but still refresh
         setStatus(e?.message || 'Post action failed', true);
       }
     }
@@ -747,9 +687,8 @@ if (btnEmbedInsert && !btnEmbedInsert.dataset.bound){
       const html = `<iframe src="${u.replace(/"/g,'&quot;')}" width="560" height="315" sandbox="allow-scripts allow-same-origin" referrerpolicy="no-referrer"></iframe>`;
       textEl.value = (textEl.value + (textEl.value?'\n':'') + html).trim();
     } else {
-      const raw = (embedHtmlEl?.value||'').trim(); 
-      if (!raw){ setStatus('Enter HTML to embed'); return; }
-      const srcdoc = escapeForSrcdoc(raw);
+      const raw = (embedHtmlEl?.value||'').trim(); if (!raw){ setStatus('Enter HTML to embed'); return; }
+      const srcdoc = raw.replace(/"/g,'&quot;');
       const html = `<iframe srcdoc="${srcdoc}" width="560" height="315" sandbox="allow-scripts allow-same-origin" referrerpolicy="no-referrer"></iframe>`;
       textEl.value = (textEl.value + (textEl.value?'\n':'') + html).trim();
     }
