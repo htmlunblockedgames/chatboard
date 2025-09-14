@@ -1,5 +1,5 @@
 /* Poly Track Chatboard – index.js */
-console.log("chatboard.index.js v21");
+console.log("chatboard.index.js v22");
 
 const WORKER_URL    = "https://twikoo-cloudflare.ertertertet07.workers.dev";
 const PAGE_URL_PATH = "/chatboard/";
@@ -9,9 +9,9 @@ const MAX_CHARS     = 2000;
 
 /* Global shimmer driver – keeps phase stable across re-renders */
 (function startGlobalShimmer(){
-  const durMs = 3200; // 3.2s loop to match previous feel
+  const durMs = 3200; // 3.2s loop
   let start = performance.now();
-  const easeInOut = (t) => 0.5 - 0.5 * Math.cos(Math.PI * 2 * t); // smooth in/out cycle
+  const easeInOut = (t) => 0.5 - 0.5 * Math.cos(Math.PI * 2 * t);
   function tick(){
     const now = performance.now();
     const raw = ((now - start) % durMs) / durMs; // 0..1
@@ -270,12 +270,10 @@ function updateAdminUI(){
     const show = !!isAdmin && !replyTarget;
     optNoReplyEl.style.display = show ? 'inline-flex' : 'none';
     if (sendNoReplyEl) {
-      // If global replies are disabled, this option is moot (disable UI)
       sendNoReplyEl.disabled = !show || !allowReplies;
     }
   }
 
-  // real-time: update send button & cancel any active reply if replies are disabled
   if (!allowReplies) {
     replyTarget = null;
     replyTo.style.display = 'none';
@@ -462,41 +460,55 @@ function renderAll(){
 }
 
 /* ===== Glow animation helpers (admin only) ===== */
-function applyTextGlowOnce(el){
-  if (!el || el.dataset.glowRunning === '1') return;
-  el.classList.remove('glow-fade');
-  el.classList.add('glow-text');
-  el.dataset.glowRunning = '1';
-  const fadeTimer = setTimeout(() => {
-    el.classList.add('glow-fade'); // cross-fade to black over 1.5s via CSS
-  }, 2000); // 2s shimmer
-  const cleanupTimer = setTimeout(() => {
-    el.classList.remove('glow-text','glow-fade');
-    delete el.dataset.glowRunning;
-  }, 2000 + 1500); // after fade completes
-  el.dataset.fadeTimer = String(fadeTimer);
-  el.dataset.cleanupTimer = String(cleanupTimer);
+/** Create an overlay span on the provided body node that mirrors its text and can fade out. */
+function createGlowOverlay(bodyEl){
+  if (!bodyEl) return null;
+  // Remove any previous overlay
+  const prev = bodyEl.querySelector('.glow-overlay');
+  if (prev) prev.remove();
+  const txt = bodyEl.textContent || '';
+  if (!txt.trim()) return null;
+  // Ensure the body element is a positioning context
+  bodyEl.style.position = 'relative';
+
+  const ov = document.createElement('span');
+  ov.className = 'glow-overlay';
+  ov.textContent = txt;
+  bodyEl.appendChild(ov);
+  // Start fully visible (opacity 1)
+  ov.style.setProperty('--glow-ol-opacity', '1');
+  return ov;
 }
 
-function applyTextGlowRemainder(el, c){
-  if (!el || el.dataset.glowRunning === '1') return;
+/** Play a 2s shimmer, then fade out overlay to 0 opacity over 1.5s and remove. */
+function applyOverlayGlowOnce(bodyEl){
+  const ov = createGlowOverlay(bodyEl);
+  if (!ov) return;
+  // After 2s, begin fade-out to reveal black text beneath
+  const fadeTimer = setTimeout(()=> {
+    ov.style.setProperty('--glow-ol-opacity', '0');
+  }, 2000);
+  // Cleanup after fade completes
+  const cleanupTimer = setTimeout(()=> {
+    ov.remove();
+  }, 2000 + 1500);
+  ov.dataset.fadeTimer = String(fadeTimer);
+  ov.dataset.cleanupTimer = String(cleanupTimer);
+}
+
+/** If message is recent, play remaining shimmer then fade; otherwise fade immediately. */
+function applyOverlayGlowRemainder(bodyEl, c){
+  const ov = createGlowOverlay(bodyEl);
+  if (!ov) return;
   const created = Number(c?.created || Date.now());
-  const elapsed = Math.max(0, (Date.now() - created) / 1000); // seconds
-  let remain = Math.max(0, 2 - elapsed); // shimmer remainder up to 2s total
-  el.classList.remove('glow-fade');
-  el.classList.add('glow-text');
-  el.dataset.glowRunning = '1';
-  const startFade = () => el.classList.add('glow-fade');
+  const elapsed = Math.max(0, (Date.now() - created) / 1000);
+  let remain = Math.max(0, 2 - elapsed); // complete a total of 2s shimmer window
   if (remain <= 0){
-    startFade();
-    remain = 0;
+    ov.style.setProperty('--glow-ol-opacity', '0');
   } else {
-    setTimeout(startFade, Math.round(remain * 1000));
+    setTimeout(()=> { ov.style.setProperty('--glow-ol-opacity', '0'); }, Math.round(remain * 1000));
   }
-  setTimeout(() => {
-    el.classList.remove('glow-text','glow-fade');
-    delete el.dataset.glowRunning;
-  }, Math.round(remain * 1000) + 1500);
+  setTimeout(()=> { ov.remove(); }, Math.round(remain * 1000) + 1500);
 }
 
 /* Only admins glow */
@@ -536,7 +548,7 @@ function renderMsg(c){
     content.appendChild(replyToSpan);
   }
   const body = renderSafeContent(c.comment || "");
-  body.classList.add('glow-target');
+  // host for overlay glow; base text remains black, overlay provides shimmering highlight
   content.appendChild(body);
 
   if (adminAuthor) {
@@ -544,17 +556,17 @@ function renderMsg(c){
     if (isPinnedRoot) {
       const key = cid;
       if (!pinAnimPlayed.has(key)) {
-        applyTextGlowOnce(body);
+        applyOverlayGlowOnce(body);
         pinAnimPlayed.add(key);
       }
     } else {
       const now = Date.now();
       const lastStart = devAnimStartAt.get(cid) || 0;
       if (now - lastStart >= 3000) {
-        applyTextGlowRemainder(body, c);
+        applyOverlayGlowRemainder(body, c);
         devAnimStartAt.set(cid, now);
       } else {
-        applyTextGlowRemainder(body, c);
+        applyOverlayGlowRemainder(body, c);
       }
     }
   }

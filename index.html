@@ -103,7 +103,7 @@
     .bubble{flex:1;min-width:0}
     .meta{font-size:12px;color:var(--muted);display:flex;gap:10px;align-items:center}
     .nick{color:#1f2127;font-weight:800}
-    .content{margin-top:6px;line-height:1.58;word-wrap:break-word}
+    .content{margin-top:6px;line-height:1.58;word-wrap:break-word; position:relative}
     .content img{max-width:480px;border-radius:10px;border:1px solid var(--border);display:block;margin:8px 0;background:#fafafa}
 
     /* Actions */
@@ -183,29 +183,25 @@
       100% { background-position: 200% 0; }
     }
 
-    /* Text glow sweep on message content */
-    .content .glow-text{
-      display:inline;
+    /* Text glow overlay that fades out to reveal base black text */
+    .glow-overlay{
+      position:absolute;
+      inset:0;
+      pointer-events:none;
+      white-space:pre-wrap;
+      color:transparent;
       background: linear-gradient(90deg,
         #8f7200 0%,
         #d9c056 18%,
         #ffe48a 45%,
         #d9c056 82%,
         #8f7200 100%);
-      background-size: 200% 100%;
-      -webkit-background-clip: text;
-      background-clip: text;
-      color: inherit; -webkit-text-fill-color: transparent;
+      background-size:200% 100%;
+      -webkit-background-clip:text;
+      background-clip:text;
       background-position: var(--shimmer-x, 0%) 0;
-    }
-    .content .glow-fade{
-      transition: -webkit-text-fill-color 1.5s ease-in-out, color 1.5s ease-in-out;
-      -webkit-text-fill-color: var(--text);
-      color: var(--text);
-    }
-    @keyframes glowSweep{
-      from { background-position:   0% 0; }
-      to   { background-position: 200% 0; }
+      opacity: var(--glow-ol-opacity, 1);
+      transition: opacity 1.5s ease-in-out;
     }
   </style>
 </head>
@@ -284,6 +280,6 @@
     </section>
   </main>
 
-  <script src="index.js?v=21"></script>
+  <script src="index.js?v=22"></script>
 </body>
 </html>
