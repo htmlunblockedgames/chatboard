@@ -471,13 +471,13 @@ function renderOne(c, depth=0){
   const body = renderSafeContent(c.content, { allowLinks:true, allowEmbeds:isAdmin }); // only admin can embed
   content.appendChild(body);
 
-  // replying-to line (if this is a reply)
+  // replying-to line (if this is a reply). Append the line first, then content.
   if (c.pid){
     const parent = state.all.get(c.pid);
     if (parent){
       const rline = document.createElement('div'); rline.className='replying-to';
       rline.textContent = `↳ in reply to ${parent.nick || 'Anonymous'}`;
-      bubble.insertBefore(rline, content);
+      bubble.appendChild(rline);
     }
   }
 
