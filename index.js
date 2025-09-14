@@ -154,6 +154,7 @@ let allowReplies = true;
 let allowPosts = true;
 const sessionAnimatedPinned = new Set();
 const animatedOnce = new Set();
+const mustAnimate = new Set();
 
 /* ===== UI helpers ===== */
 if (limitMbEl) limitMbEl.textContent=MAX_FILE_MB;
@@ -170,10 +171,7 @@ const initialOf = s => (s||"A").trim().charAt(0).toUpperCase();
 function truthy(v){ return v === true || v === 1 || v === '1' || v === 'true'; }
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 function parseRetryAfter(h){ if (!h) return 0; const n = Number(h); if (!Number.isNaN(n)) return Date.now() + n*1000; const d = Date.parse(h); return Number.isNaN(d) ? 0 : d; }
-function authorIsAdmin(c){
-  const n = String((c && c.nick) || '').trim().toLowerCase();
-  return n === ADMIN_NICK.toLowerCase();
-}
+function authorIsAdmin(c){ return String((c && c.nick) || '') === ADMIN_NICK; }
 
 /* Inline confirm helper (two-tap) */
 function armConfirmButton(btn, label = 'Are you sure?', ms = 3000){
@@ -463,44 +461,45 @@ function createGlowOverlayOn(targetEl){
 }
 
 function maybeAnimateMessage(c, bodyEl){
-  const stale = bodyEl && bodyEl.querySelector && bodyEl.querySelector(':scope > .glow-overlay');
-  if (stale) stale.remove();
-  const isPinnedAdmin = c.top && authorIsAdmin(c);
-  const isRecentAdmin = authorIsAdmin(c) && (Date.now() - Number(c.created || 0) <= 5000);
+  // Only admins' message bodies glow
+  if (!authorIsAdmin(c)) return;
 
-  if (isPinnedAdmin) {
-    if (sessionAnimatedPinned.has(c.id)) return;
+  const forced   = mustAnimate.has(c.id);
+  const isPinned = !!c.top;
+  const isRecent = (Date.now() - Number(c.created || 0) <= 5000);
+
+  if (isPinned) {
+    // Pinned admin messages: once per session unless forced
+    if (sessionAnimatedPinned.has(c.id) && !forced) return;
     sessionAnimatedPinned.add(c.id);
-  } else if (!isRecentAdmin || animatedOnce.has(c.id)) {
+  } else if (!(forced || isRecent) || animatedOnce.has(c.id)) {
+    // Non‑pinned admin messages: play once if recent (<=5s) or forced
     return;
   } else {
     animatedOnce.add(c.id);
   }
 
+  // Run after layout so overlay aligns perfectly with text baselines
   requestAnimationFrame(() => {
     const targets = bodyEl.querySelectorAll('.glow-target');
-    const list = targets.length ? [...targets] : [bodyEl];
+    const list = [...targets].filter(el => (el.textContent || '').trim().length);
+    if (!list.length) { if (forced) mustAnimate.delete(c.id); return; }
 
     list.forEach((tgt) => {
       const ov = createGlowOverlayOn(tgt);
       if (!ov) return;
-
-      // Restart the sweep animation reliably (uses CSS @keyframes)
+      // Restart sweep reliably
       ov.style.animation = 'none';
-      void ov.offsetWidth; // reflow
+      void ov.offsetWidth; // reflow to reset keyframes
       ov.style.animation = 'glowSweep 2s ease-in-out forwards';
-
-      // After the sweep, fade out over 1.5s to reveal base text
-      setTimeout(() => {
-        // force reflow so the opacity transition always fires
-        void ov.offsetWidth;
-        ov.style.opacity = '0';
-      }, 2000);
-
+      // After sweep, fade the overlay to reveal base text (no flash)
+      setTimeout(() => { ov.style.opacity = '0'; }, 2000);
       const cleanup = () => { if (ov && ov.parentNode) ov.parentNode.removeChild(ov); };
       ov.addEventListener('transitionend', cleanup, { once: true });
       setTimeout(cleanup, 3600);
     });
+
+    if (forced) mustAnimate.delete(c.id);
   });
 }
 
@@ -779,6 +778,7 @@ btnSend && btnSend.addEventListener('click', async()=>{
     const r = await api(payload);
     if (r && r.code===0){
       const newId = r.data?.id;
+      if (newId) { mustAnimate.add(String(newId)); }
 
       if (isAdmin && !replyTarget && sendNoReplyEl && sendNoReplyEl.checked){
         try { await api({ event:'COMMENT_TOGGLE_LOCK_FOR_ADMIN', id:newId, url: PAGE_URL_PATH, lock: true }); } catch{}
