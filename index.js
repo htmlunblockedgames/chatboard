@@ -729,7 +729,13 @@ async function loadLatest(){
     const incoming = Array.isArray(r?.data?.comments) ? r.data.comments : [];
     if (!firstLoadDone) {
       for (const it of incoming) {
-        if (!it.top) seenIds.add(String(it.id));
+        if (it.top) {
+          // Ensure pinned admin messages animate on first render of this session
+          mustAnimate.add(String(it.id));
+        } else {
+          // Do not animate historical non‑pinned messages
+          seenIds.add(String(it.id));
+        }
       }
       firstLoadDone = true;
     }
