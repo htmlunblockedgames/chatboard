@@ -554,13 +554,6 @@ function buildThread(data){
   for (const list of state.childrenByRoot.values()) list.sort((a,b)=> a.created - b.created);
 }
 
-function formatAdminMetaText(ip, loc) {
-  let parts = [];
-  if (ip) parts.push(`IP: ${ip}`);
-  else parts.push('IP: ?');
-  if (loc && loc.trim()) parts.push(loc);
-  return '· ' + parts.join(' · ');
-}
 
 function renderOne(c){
   const msg = document.createElement('div'); msg.className = 'msg'; msg.dataset.id = c.id;
@@ -577,20 +570,30 @@ function renderOne(c){
   const meta = document.createElement('div'); meta.className='meta';
   const nick = document.createElement('span'); nick.className='nick'; nick.textContent = c.nick || 'Anonymous';
   if (authorIsAdmin(c)) nick.classList.add('admin-glow');
-const time = document.createElement('span'); time.textContent = new Date(c.created||Date.now()).toLocaleString();
+
+  // Build location (admin-only), no IP, e.g., "City, Region, Country"
+  let locText = '';
   if (isAdmin) {
-  const adminMeta = document.createElement('span');
-  adminMeta.className = 'admin-meta';
-  const bits = [];
-  if (c.city) bits.push(c.city);
-  if (c.region) bits.push(c.region);
-  if (c.country) bits.push(c.country);
-  const loc = bits.join(', ');
-  adminMeta.textContent = formatAdminMetaText(c.ip, loc);
-  meta.appendChild(adminMeta);
-}
-meta.appendChild(nick); meta.appendChild(time);
-bubble.appendChild(meta);
+    const parts = [];
+    if (c.city) parts.push(c.city);
+    if (c.region) parts.push(c.region);
+    if (c.country) parts.push(c.country);
+    locText = parts.join(', ');
+  }
+
+  const time = document.createElement('span');
+  time.textContent = new Date(c.created || Date.now()).toLocaleString();
+
+  // Order: username, (· location), time
+  meta.appendChild(nick);
+  if (isAdmin && locText) {
+    const locSpan = document.createElement('span');
+    locSpan.className = 'loc';
+    locSpan.textContent = '· ' + locText;
+    meta.appendChild(locSpan);
+  }
+  meta.appendChild(time);
+  bubble.appendChild(meta);
 
   const content = document.createElement('div'); content.className='content';
   const body = renderSafeContent(c.content, { allowLinks:true, allowEmbeds: authorIsAdmin(c) });
