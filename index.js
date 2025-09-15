@@ -1,10 +1,10 @@
-/* Poly Track Chatboard – index.js (v40)
+/* Poly Track Chatboard – index.js (v41)
    Fixes:
    - Restored admin text glow: single sweep + 1.5s fade (no white flash; aligned to text spans)
    - Stable live updates: debounced WS refresh (coalesces bursts, avoids overlapping loads)
 */
 
-console.log("chatboard.index.js v40");
+console.log("chatboard.index.js v41");
 
 /* ===== Embed context (client does not hard-block; server enforces) ===== */
 const EMBED_HOST_HINT = new URLSearchParams(location.search).get('embedHost') || "";
@@ -554,6 +554,14 @@ function buildThread(data){
   for (const list of state.childrenByRoot.values()) list.sort((a,b)=> a.created - b.created);
 }
 
+function formatAdminMetaText(ip, loc) {
+  let parts = [];
+  if (ip) parts.push(`IP: ${ip}`);
+  else parts.push('IP: ?');
+  if (loc && loc.trim()) parts.push(loc);
+  return '· ' + parts.join(' · ');
+}
+
 function renderOne(c){
   const msg = document.createElement('div'); msg.className = 'msg'; msg.dataset.id = c.id;
   if (c.top) {
@@ -569,9 +577,20 @@ function renderOne(c){
   const meta = document.createElement('div'); meta.className='meta';
   const nick = document.createElement('span'); nick.className='nick'; nick.textContent = c.nick || 'Anonymous';
   if (authorIsAdmin(c)) nick.classList.add('admin-glow');
-  const time = document.createElement('span'); time.textContent = new Date(c.created||Date.now()).toLocaleString();
-  meta.appendChild(nick); meta.appendChild(time);
-  bubble.appendChild(meta);
+const time = document.createElement('span'); time.textContent = new Date(c.created||Date.now()).toLocaleString();
+  if (isAdmin) {
+  const adminMeta = document.createElement('span');
+  adminMeta.className = 'admin-meta';
+  const bits = [];
+  if (c.city) bits.push(c.city);
+  if (c.region) bits.push(c.region);
+  if (c.country) bits.push(c.country);
+  const loc = bits.join(', ');
+  adminMeta.textContent = formatAdminMetaText(c.ip, loc);
+  meta.appendChild(adminMeta);
+}
+meta.appendChild(nick); meta.appendChild(time);
+bubble.appendChild(meta);
 
   const content = document.createElement('div'); content.className='content';
   const body = renderSafeContent(c.content, { allowLinks:true, allowEmbeds: authorIsAdmin(c) });
