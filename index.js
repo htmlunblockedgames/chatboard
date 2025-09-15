@@ -17,6 +17,10 @@ const MAX_FILE_MB   = 7;
 const MAX_CHARS     = 2000;
 const ADMIN_NICK    = "Poly Track Administrator";
 
+/* ===== Pagination config ===== */
+const PAGE_SIZE = 10;
+let currentPage = 1;
+
 /* ===== Global shimmer driver (for admin username only) ===== */
 (function startGlobalShimmer(){
   const durMs = 3200;
@@ -68,7 +72,9 @@ async function runRefresh() {
   if (__refreshInFlight) { __refreshQueued = true; return; }
   __refreshInFlight = true;
   try { await refreshAdminStatus(); } catch {}
-  try { await loadLatest(true); } catch {}
+  try {
+    await loadLatest(true);
+  } catch {}
   finally {
     __refreshInFlight = false;
     if (__refreshQueued) { __refreshQueued = false; runRefresh(); }
@@ -158,6 +164,55 @@ const embedBox=$("embedBox"), embedModeEl=$("embedMode"),
 
 const limitMbEl=$("limitMb"), limitChars=$("limitChars"), limitChars2=$("limitChars2"), charCount=$("charCount");
 const replyTo=$("replyTo"), replyName=$("replyName"), replyCancel=$("replyCancel");
+if (loadMoreBtn && !loadMoreBtn.dataset.boundLoadMore){
+  loadMoreBtn.dataset.boundLoadMore = '1';
+  loadMoreBtn.addEventListener('click', async () => {
+    if (loading) return;
+    loadMoreBtn.disabled = true;
+    setStatus('Loading…');
+    try{
+      const next = currentPage + 1;
+      const r = await fetchPage(next);
+      if (r && r.data){
+        currentPage = next;
+        const acc = new Map();
+        for (const c of state.all.values()) acc.set(String(c.id), c);
+        const list = Array.isArray(r.data.comments) ? r.data.comments : [];
+        for (const c of list) acc.set(String(c.id), c);
+        serverCounts = r.data.counts || serverCounts;
+        buildThread({ comments: Array.from(acc.values()) });
+        renderAllIncremental();
+        updateAdminUI();
+        updateLoadMoreVisibility();
+      }
+    } catch(e){
+      setStatus(e && e.message ? e.message : 'Load failed', true);
+    } finally {
+      loadMoreBtn.disabled = false;
+      setStatus('');
+    }
+  });
+}
+/* ===== Pagination helpers ===== */
+function getLoadedRootCounts(){
+  let roots = 0, pins = 0;
+  for (const c of state.all.values()){
+    if (!c.rid){ roots++; if (c.top) pins++; }
+  }
+  return { roots, pins };
+}
+function updateLoadMoreVisibility(){
+  if (!loadMoreBtn) return;
+  const totals = serverCounts || {};
+  const totalRoots = Number(totals.tops || 0);
+  const pinned = Number(totals.pinned || 0);
+  const nonPinnedTotal = Math.max(0, totalRoots - pinned);
+  const loadedNow = Math.max(0, getLoadedRootCounts().roots - getLoadedRootCounts().pins);
+  loadMoreBtn.style.display = loadedNow < nonPinnedTotal ? 'inline-flex' : 'none';
+}
+async function fetchPage(p){
+  return await api({ event:'COMMENT_GET', page: Math.max(1, Number(p) || 1), pageSize: PAGE_SIZE });
+}
 /* >>> Added: presence DOM refs */
 const onlineUsersEl=$("onlineUsers"), onlineTabsEl=$("onlineTabs");
 /* <<< Added */
@@ -807,47 +862,30 @@ function renderAllIncremental(){
 }
 
 /* ===== Loading ===== */
-async function loadLatest(){
-  if (loading) return; loading = true;
+async function loadLatest(allPages = false){
+  if (loading) return;
+  loading = true;
   try{
-    const r = await api({ event:'GET', url: PAGE_URL_PATH, page:1, pageSize: 200 });
-    // Populate seenIds for non-pinned messages on first load so we don’t animate historical backfill
-    const incoming = Array.isArray(r?.data?.comments) ? r.data.comments : [];
+    const pagesToFetch = allPages ? Math.max(1, currentPage) : 1;
 
-    // WS fallback: animate very recent admin messages on refresh
-    const nowTs = Date.now();
-    for (const it of incoming) {
-      if (authorIsAdmin(it)) {
-        if (it.top && !sessionAnimatedPinned.has(it.id)) {
-          // Pinned admin messages: glow once per session
-          mustAnimate.add(String(it.id));
-          sessionAnimatedPinned.add(it.id);
-        } else if (!it.top && (nowTs - Number(it.created || 0) <= 5000)) {
-          // Non-pinned admin messages: glow for all users if new (WS or recent)
-          mustAnimate.add(String(it.id));
-        }
+    const acc = new Map();
+    for (let p = 1; p <= pagesToFetch; p++){
+      const r = await fetchPage(p);
+      if (r && r.data){
+        serverCounts = r.data.counts || serverCounts;
+        const list = Array.isArray(r.data.comments) ? r.data.comments : [];
+        for (const c of list) acc.set(String(c.id), c);
       }
     }
 
-    if (!firstLoadDone) {
-      for (const it of incoming) {
-        if (it.top) {
-          // Ensure pinned admin messages animate on first render of this session
-          mustAnimate.add(String(it.id));
-        } else {
-          // Do not animate historical non-pinned messages
-          seenIds.add(String(it.id));
-        }
-      }
-      firstLoadDone = true;
-    }
-
-    serverCounts = r?.data?.counts || null;
-    buildThread(r?.data);
+    buildThread({ comments: Array.from(acc.values()) });
     renderAllIncremental();
+    firstLoadDone = true;
     updateAdminUI();
-  }catch(e){ setStatus(e?.message||'Load failed', true); }
-  finally{ loading = false; }
+    updateLoadMoreVisibility();
+  } finally {
+    loading = false;
+  }
 }
 
 /* ===== Auth & send ===== */
