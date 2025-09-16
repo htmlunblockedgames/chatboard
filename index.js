@@ -1709,4 +1709,6 @@ btnSend && btnSend.addEventListener('click', async()=>{
   connEl.textContent = ws && ws.readyState===1 ? "Live: Connected" : "Live: Connecting…";
 })();
 
+runRefresh().catch(()=>{});
+
 }
