@@ -8,6 +8,9 @@ console.log("chatboard.index.js v42");
 
 /* ===== Embed context (client does not hard-block; server enforces) ===== */
 const EMBED_HOST_HINT = new URLSearchParams(location.search).get('embedHost') || "";
+let ACTUAL_PARENT = '';
+try { ACTUAL_PARENT = document.referrer || ''; }
+catch { ACTUAL_PARENT = ''; }
 
 /* ===== Constants ===== */
 const WORKER_URL    = "https://twikoo-cloudflare.ertertertet07.workers.dev";
@@ -302,6 +305,28 @@ roomButtons.forEach(btn => {
   }
 });
 updateRoomButtonUI();
+
+function originMatchesEmbed(origin){
+  if (!EMBED_HOST_HINT) return true;
+  if (!origin) return false;
+  try {
+    const embedOrigin = new URL(EMBED_HOST_HINT).origin;
+    return embedOrigin === origin;
+  } catch {
+    return false;
+  }
+}
+
+window.addEventListener('message', (event) => {
+  let data = event.data;
+  if (typeof data === 'string') {
+    try { data = JSON.parse(data); }
+    catch { /* ignore malformed */ }
+  }
+  if (!data || data.type !== 'setRoom') return;
+  if (!originMatchesEmbed(event.origin)) return;
+  switchRoom(data.room);
+});
 if (loadMoreBtn && !loadMoreBtn.dataset.boundLoadMore){
   loadMoreBtn.dataset.boundLoadMore = '1';
   loadMoreBtn.addEventListener('click', async () => {
