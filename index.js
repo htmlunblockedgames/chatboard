@@ -319,10 +319,10 @@ const isDisallowedSite = !(isProdRoute || isLocalHost);
 if (isDisallowedSite) {
   renderDisallowedRedirect();
   window.__CHATBOARD_BLOCKED__ = true;
-}
+} else {
 
 /* Ensure WS starts once */
-if (!isDisallowedSite && !window.__wsStarted) { window.__wsStarted = true; try { connectWS(); } catch {} }
+if (!window.__wsStarted) { window.__wsStarted = true; try { connectWS(); } catch {} }
 /* >>> Added: leave on unload (bind once) */
 if (!window.__presenceBound){
   window.__presenceBound = true;
@@ -1650,3 +1650,5 @@ btnSend && btnSend.addEventListener('click', async()=>{
   if (!connEl) return;
   connEl.textContent = ws && ws.readyState===1 ? "Live: Connected" : "Live: Connecting…";
 })();
+
+}
