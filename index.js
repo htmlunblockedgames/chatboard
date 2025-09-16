@@ -1,10 +1,10 @@
-/* Poly Track Chatboard – index.js (v41)
-   Fixes:
-   - Restored admin text glow: single sweep + 1.5s fade (no white flash; aligned to text spans)
-   - Stable live updates: debounced WS refresh (coalesces bursts, avoids overlapping loads)
+/* Poly Track Chatboard – index.js (v42)
+   Additions:
+   - Admin-only polls with real-time vote tallies
+   - Client-side poll builder + voting UI with optimistic updates
 */
 
-console.log("chatboard.index.js v41");
+console.log("chatboard.index.js v42");
 
 /* ===== Embed context (client does not hard-block; server enforces) ===== */
 const EMBED_HOST_HINT = new URLSearchParams(location.search).get('embedHost') || "";
@@ -16,6 +16,8 @@ const PAGE_HREF     = "https://htmlunblockedgames.github.io/chatboard/";
 const MAX_FILE_MB   = 7;
 const MAX_CHARS     = 2000;
 const ADMIN_NICK    = "Poly Track Administrator";
+const MIN_POLL_OPTIONS = 2;
+const MAX_POLL_OPTIONS = 8;
 
 /* ===== Pagination config ===== */
 const PAGE_SIZE = 10;
@@ -63,6 +65,15 @@ const LIKE_KEY = (() => {
   if (!v) {
     v = 'lk_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
     localStorage.setItem('chat_like_key', v);
+  }
+  return v;
+})();
+
+const POLL_KEY = (() => {
+  let v = localStorage.getItem('chat_poll_key');
+  if (!v) {
+    v = 'pk_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+    localStorage.setItem('chat_poll_key', v);
   }
   return v;
 })();
@@ -147,6 +158,10 @@ function connectWS(){
           updateCommentLikes(String(msg.id), msg.likes);
           return;
         }
+        if (msg && msg.type === 'poll-vote' && msg.id) {
+          applyPollCounts(String(msg.id), msg.counts, msg.totalVotes);
+          return;
+        }
         /* <<< Added */
         if (msg && msg.type === 'new-reply') {
           if (msg.id) { mustAnimate.add(String(msg.id)); }
@@ -198,6 +213,9 @@ const toggleRepliesEl=$("toggleReplies");
 const togglePostsEl=$("togglePosts");
 const optNoReplyEl=$("optNoReply"), sendNoReplyEl=$("sendNoReply"),
       optAutoPinEl=$("optAutoPin"), sendAutoPinEl=$("sendAutoPin");
+const btnCreatePoll=$("btnCreatePoll"), pollBuilder=$("pollBuilder"), pollQuestion=$("pollQuestion"),
+      pollOptionsWrap=$("pollOptionsWrap"), btnPollAddOption=$("btnPollAddOption"),
+      btnPollSend=$("btnPollSend"), btnPollCancel=$("btnPollCancel");
 
 const embedBox=$("embedBox"), embedModeEl=$("embedMode"),
       embedUrlEl=$("embedUrl"), embedHtmlEl=$("embedHtml"), btnEmbedInsert=$("btnEmbedInsert");
@@ -251,7 +269,7 @@ function updateLoadMoreVisibility(){
   loadMoreBtn.style.display = loadedNow < nonPinnedTotal ? 'inline-flex' : 'none';
 }
 async function fetchPage(p){
-  return await api({ event:'COMMENT_GET', page: Math.max(1, Number(p) || 1), pageSize: PAGE_SIZE, likeKey: LIKE_KEY, sort: currentSort });
+  return await api({ event:'COMMENT_GET', page: Math.max(1, Number(p) || 1), pageSize: PAGE_SIZE, likeKey: LIKE_KEY, voteKey: POLL_KEY, sort: currentSort });
 }
 /* >>> Added: presence DOM refs */
 const onlineUsersEl=$("onlineUsers"), onlineTabsEl=$("onlineTabs");
@@ -298,6 +316,8 @@ const seenIds = new Set();
 const glowActive = new Map(); // id -> { startedAt, duration }
 const pendingLikes = new Set();
 let firstLoadDone = false;
+const pendingPollVotes = new Set();
+let pollBuilderOpen = false;
 
 /* ===== UI helpers ===== */
 if (limitMbEl) limitMbEl.textContent=MAX_FILE_MB;
@@ -315,6 +335,209 @@ function truthy(v){ return v === true || v === 1 || v === '1' || v === 'true'; }
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 function parseRetryAfter(h){ if (!h) return 0; const n = Number(h); if (!Number.isNaN(n)) return Date.now() + n*1000; const d = Date.parse(h); return Number.isNaN(d) ? 0 : d; }
 function authorIsAdmin(c){ return String((c && c.nick) || '') === ADMIN_NICK; }
+
+function normalizePoll(comment){
+  if (!comment || !comment.poll) return;
+  const poll = comment.poll;
+  poll.question = String(poll.question || comment.content || '').trim();
+  const opts = Array.isArray(poll.options) ? poll.options : [];
+  poll.options = opts.map(opt => ({
+    text: String(opt?.text || '').trim(),
+    votes: Number(opt?.votes || 0)
+  }));
+  if (!Number.isFinite(poll.totalVotes)) {
+    poll.totalVotes = poll.options.reduce((acc, opt) => acc + Number(opt.votes || 0), 0);
+  } else {
+    poll.totalVotes = Number(poll.totalVotes || 0);
+  }
+  poll.allowMultiple = !!poll.allowMultiple;
+  poll.closed = !!poll.closed;
+  poll.canVote = poll.canVote === undefined ? !poll.closed : !!poll.canVote;
+  poll.selections = Array.isArray(poll.selections)
+    ? poll.selections.map(n => Number(n)).filter(Number.isInteger)
+    : [];
+}
+
+function createPollOptionInput(value = ''){
+  if (!pollOptionsWrap) return null;
+  const row = document.createElement('div');
+  row.className = 'poll-option-input';
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.placeholder = 'Option';
+  input.maxLength = 80;
+  input.value = value;
+  row.appendChild(input);
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'btn remove';
+  btn.textContent = '✕';
+  btn.addEventListener('click', () => {
+    row.remove();
+    updatePollOptionRemoveButtons();
+  });
+  row.appendChild(btn);
+  pollOptionsWrap.appendChild(row);
+  updatePollOptionRemoveButtons();
+  return row;
+}
+
+function updatePollOptionRemoveButtons(){
+  if (!pollOptionsWrap) return;
+  const rows = Array.from(pollOptionsWrap.querySelectorAll('.poll-option-input'));
+  rows.forEach(row => {
+    const btn = row.querySelector('button.remove');
+    if (!btn) return;
+    btn.style.display = rows.length > MIN_POLL_OPTIONS ? 'inline-flex' : 'none';
+  });
+}
+
+function resetPollBuilder(){
+  if (!pollOptionsWrap || !pollQuestion) return;
+  pollQuestion.value = '';
+  pollOptionsWrap.innerHTML = '';
+  for (let i = 0; i < MIN_POLL_OPTIONS; i++) createPollOptionInput('');
+  updatePollOptionRemoveButtons();
+}
+
+function showPollBuilder(){
+  if (!pollBuilder) return;
+  pollBuilderOpen = true;
+  pollBuilder.style.display = 'flex';
+  resetPollBuilder();
+  updateSendButtonUI();
+}
+
+function hidePollBuilder(){
+  if (!pollBuilder) return;
+  pollBuilderOpen = false;
+  pollBuilder.style.display = 'none';
+  updateSendButtonUI();
+}
+
+function collectPollPayload(){
+  if (!pollQuestion || !pollOptionsWrap) return { error: 'Poll builder missing' };
+  const question = pollQuestion.value.trim();
+  const optionInputs = Array.from(pollOptionsWrap.querySelectorAll('input')); 
+  const options = optionInputs
+    .map(input => input.value.trim())
+    .filter(Boolean);
+  if (!question) return { error: 'Enter a poll question' };
+  if (options.length < MIN_POLL_OPTIONS) return { error: `Add at least ${MIN_POLL_OPTIONS} options` };
+  if (options.length > MAX_POLL_OPTIONS) return { error: `Maximum ${MAX_POLL_OPTIONS} options` };
+  return { question, options };
+}
+
+function formatVoteLabel(votes, total){
+  const count = Number(votes || 0);
+  const totalVotes = Number(total || 0);
+  if (!totalVotes) return `${count} vote${count === 1 ? '' : 's'}`;
+  const pct = Math.round((count / Math.max(totalVotes, 1)) * 100);
+  return `${count} · ${pct}%`;
+}
+
+function renderPoll(contentEl, comment){
+  if (!contentEl || !comment || !comment.poll) return;
+  const poll = comment.poll;
+  const selections = new Set((poll.selections || []).map(n => Number(n)).filter(Number.isInteger));
+  const totalVotes = Number(poll.totalVotes || poll.options.reduce((acc, opt) => acc + Number(opt.votes || 0), 0));
+
+  contentEl.innerHTML = '';
+  const card = document.createElement('div');
+  card.className = 'poll-card';
+  card.dataset.pollId = String(comment.id);
+
+  const questionEl = document.createElement('div');
+  questionEl.className = 'poll-question glow-target';
+  questionEl.textContent = poll.question || comment.content || '';
+  card.appendChild(questionEl);
+
+  const optionsWrap = document.createElement('div');
+  optionsWrap.className = 'poll-options';
+  (poll.options || []).forEach((opt, idx) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'poll-option';
+    btn.dataset.commentId = String(comment.id);
+    btn.dataset.optionIndex = String(idx);
+    if (poll.closed || !poll.canVote) btn.classList.add('closed');
+    else btn.classList.add('can-vote');
+    if (selections.has(idx)) btn.classList.add('selected');
+
+    const bar = document.createElement('div'); bar.className = 'bar';
+    const votes = Number(opt?.votes || 0);
+    const pct = totalVotes > 0 ? Math.min(100, Math.max(0, Math.round((votes / totalVotes) * 100))) : 0;
+    bar.style.width = pct + '%';
+    bar.style.opacity = votes ? '1' : '0';
+    btn.appendChild(bar);
+
+    const label = document.createElement('span'); label.className='label'; label.textContent = opt?.text || `Option ${idx + 1}`;
+    btn.appendChild(label);
+
+    const voteSpan = document.createElement('span'); voteSpan.className='votes'; voteSpan.textContent = formatVoteLabel(votes, totalVotes);
+    btn.appendChild(voteSpan);
+
+    if (!poll.closed && poll.canVote) {
+      btn.addEventListener('click', () => submitPollVote(comment.id, idx));
+    }
+
+    optionsWrap.appendChild(btn);
+  });
+  card.appendChild(optionsWrap);
+
+  const meta = document.createElement('div'); meta.className='poll-meta';
+  const totalEl = document.createElement('span'); totalEl.textContent = `${totalVotes} vote${totalVotes === 1 ? '' : 's'}`;
+  meta.appendChild(totalEl);
+  if (poll.closed) {
+    const closedEl = document.createElement('span'); closedEl.textContent = 'Voting closed'; meta.appendChild(closedEl);
+  } else if (selections.size) {
+    const votedEl = document.createElement('strong'); votedEl.textContent = 'You voted'; meta.appendChild(votedEl);
+  }
+  card.appendChild(meta);
+
+  contentEl.appendChild(card);
+}
+
+function applyPollCounts(commentId, counts, totalVotes, selections){
+  const comment = state.all.get(String(commentId));
+  if (!comment || !comment.poll) return;
+  if (Array.isArray(counts)) {
+    comment.poll.options = comment.poll.options.map((opt, idx) => ({
+      text: opt.text,
+      votes: Number(counts[idx] || 0)
+    }));
+  }
+  if (totalVotes !== undefined) comment.poll.totalVotes = Number(totalVotes || 0);
+  if (Array.isArray(selections)) comment.poll.selections = selections.map(n => Number(n)).filter(Number.isInteger);
+  normalizePoll(comment);
+  const msg = messagesEl && messagesEl.querySelector(`.msg[data-id="${commentId}"]`);
+  if (msg) updateMessageElement(msg, comment);
+}
+
+async function submitPollVote(commentId, optionIndex){
+  const idStr = String(commentId);
+  if (pendingPollVotes.has(idStr)) return;
+  const comment = state.all.get(idStr);
+  if (!comment || !comment.poll) return;
+  if (comment.poll.closed || !comment.poll.canVote) return;
+  pendingPollVotes.add(idStr);
+  try {
+    const res = await api({ event:'POLL_VOTE', id: idStr, option: optionIndex, voteKey: POLL_KEY, url: PAGE_URL_PATH });
+    if (res && res.code === 0 && res.data && res.data.poll) {
+      applyPollCounts(idStr, res.data.poll.counts, res.data.poll.totalVotes, res.data.poll.selections || [optionIndex]);
+      setStatus('Vote recorded');
+      setTimeout(() => { setStatus(''); }, 1500);
+    } else if (res && res.message) {
+      setStatus(res.message, true);
+    } else {
+      setStatus('Failed to record vote', true);
+    }
+  } catch (e){
+    setStatus(e?.message || 'Failed to record vote', true);
+  } finally {
+    pendingPollVotes.delete(idStr);
+  }
+}
 
 /* Inline confirm helper (two-tap) */
 function armConfirmButton(btn, label = 'Are you sure?', ms = 3000){
@@ -389,6 +612,12 @@ async function api(eventObj){
 /* ===== Admin UI & toggles ===== */
 function updateSendButtonUI(){
   if (!btnSend) return;
+  if (pollBuilderOpen) {
+    btnSend.disabled = true;
+    btnSend.textContent = "Send";
+    btnSend.title = "Close the poll builder to send a message";
+    return;
+  }
   if (!isAdmin && !allowPosts) { btnSend.disabled = true; btnSend.textContent = "Chat Locked"; btnSend.title = "Only admin can post right now"; }
   else { btnSend.disabled = false; btnSend.textContent = "Send"; btnSend.title = ""; }
 }
@@ -416,6 +645,14 @@ function updateAdminUI(){
   if (optNoReplyEl){ const show = !!isAdmin && !replyTarget; optNoReplyEl.style.display = show ? 'inline-flex' : 'none'; if (sendNoReplyEl) sendNoReplyEl.disabled = !show || !allowReplies; }
   if (optAutoPinEl){ const show = !!isAdmin && !replyTarget; optAutoPinEl.style.display = show ? 'inline-flex' : 'none'; if (sendAutoPinEl) sendAutoPinEl.disabled = !show; }
   if (embedBox) embedBox.style.display = isAdmin ? 'flex' : 'none';
+
+  if (btnCreatePoll){
+    const showPollBtn = !!isAdmin && !replyTarget;
+    btnCreatePoll.style.display = showPollBtn ? 'inline-flex' : 'none';
+    btnCreatePoll.disabled = !showPollBtn;
+    if (!showPollBtn && pollBuilderOpen) hidePollBuilder();
+  }
+  if (!isAdmin && pollBuilderOpen) hidePollBuilder();
 
   if (!allowReplies && !isAdmin) { replyTarget = null; if (replyTo) replyTo.style.display = 'none'; }
 
@@ -798,6 +1035,7 @@ function buildThread(data){
   for (const c of arr) {
     c.likes = Number(c.likes || 0);
     c.liked = !!c.liked;
+    normalizePoll(c);
     state.all.set(c.id, c);
   }
   const roots = arr.filter(c => !c.rid);
@@ -958,8 +1196,11 @@ function renderOne(c){
   bubble.appendChild(meta);
 
   const content = document.createElement('div'); content.className='content';
-  const body = renderSafeContent(c.content, { allowLinks:true, allowEmbeds: authorIsAdmin(c) });
-  content.appendChild(body);
+  if (c.poll) renderPoll(content, c);
+  else {
+    const body = renderSafeContent(c.content, { allowLinks:true, allowEmbeds: authorIsAdmin(c) });
+    content.appendChild(body);
+  }
 
   if (c.pid){
     const parent = state.all.get(c.pid);
@@ -1064,6 +1305,13 @@ function updateMessageElement(msg, c){
   if (!content) {
     content = document.createElement('div'); content.className='content';
     bubble.appendChild(content);
+  }
+
+  if (c.poll) renderPoll(content, c);
+  else {
+    content.innerHTML = '';
+    const body = renderSafeContent(c.content, { allowLinks:true, allowEmbeds: authorIsAdmin(c) });
+    content.appendChild(body);
   }
 
   if (c.pid) {
@@ -1242,6 +1490,58 @@ btnAdminLogin && btnAdminLogin.addEventListener('click', async()=>{
 
 btnAdminLogout && btnAdminLogout.addEventListener('click', async()=>{
   TK_TOKEN = null; localStorage.removeItem('twikoo_access_token'); localStorage.removeItem('twikoo_is_admin'); isAdmin = false; await refreshAdminStatus();
+});
+
+btnCreatePoll && btnCreatePoll.addEventListener('click', ()=>{
+  if (!isAdmin) { setStatus('Only admin can create polls', true); return; }
+  if (pollBuilderOpen) { hidePollBuilder(); return; }
+  replyTarget = null;
+  if (replyTo) replyTo.style.display = 'none';
+  showPollBuilder();
+  updateAdminUI();
+});
+
+btnPollAddOption && btnPollAddOption.addEventListener('click', ()=>{
+  if (!pollBuilderOpen) { showPollBuilder(); }
+  const existing = pollOptionsWrap ? pollOptionsWrap.querySelectorAll('input').length : 0;
+  if (existing >= MAX_POLL_OPTIONS) { setStatus(`Maximum ${MAX_POLL_OPTIONS} options`, true); return; }
+  createPollOptionInput('');
+});
+
+btnPollCancel && btnPollCancel.addEventListener('click', ()=>{
+  hidePollBuilder();
+  setStatus('');
+});
+
+btnPollSend && btnPollSend.addEventListener('click', async()=>{
+  if (!isAdmin) { setStatus('Only admin can send polls', true); return; }
+  const payload = collectPollPayload();
+  if (payload.error) { setStatus(payload.error, true); return; }
+  setStatus('Sending poll…');
+  btnPollSend.disabled = true;
+  try {
+    const res = await api({ event:'POLL_CREATE', question: payload.question, options: payload.options, url: PAGE_URL_PATH });
+    if (res && res.code === 0 && res.data && res.data.id) {
+      const newId = String(res.data.id);
+      if (sendNoReplyEl && sendNoReplyEl.checked) {
+        try { await api({ event:'COMMENT_TOGGLE_LOCK_FOR_ADMIN', id:newId, url:PAGE_URL_PATH, lock:true }); }
+        catch {}
+      }
+      if (sendAutoPinEl && sendAutoPinEl.checked) {
+        try { await api({ event:'COMMENT_SET_FOR_ADMIN', id:newId, url:PAGE_URL_PATH, set:{ top:true } }); }
+        catch {}
+      }
+      hidePollBuilder();
+      setStatus('Poll sent');
+      queueRefresh(120);
+    } else {
+      setStatus(res?.message || 'Failed to send poll', true);
+    }
+  } catch (e){
+    setStatus(e?.message || 'Failed to send poll', true);
+  } finally {
+    btnPollSend.disabled = false;
+  }
 });
 
 replyCancel && replyCancel.addEventListener('click', ()=>{ replyTarget=null; if (replyTo) replyTo.style.display='none'; updateAdminUI(); });

@@ -119,6 +119,19 @@
     .content{margin-top:6px;line-height:1.58;word-wrap:break-word;overflow-wrap:anywhere;word-break:break-word; position:relative}
     .content img{max-width:480px;border-radius:10px;border:1px solid var(--border);display:block;margin:8px 0;background:#fafafa}
 
+    .poll-card{margin-top:8px;padding:12px 14px;border:1px solid var(--border);border-radius:12px;background:#f7fbff;display:flex;flex-direction:column;gap:10px;position:relative;overflow:hidden}
+    .poll-question{font-size:14px;font-weight:800;color:#0f3c55}
+    .poll-options{display:flex;flex-direction:column;gap:8px}
+    .poll-option{position:relative;padding:10px 12px;border:1px solid var(--border-2);border-radius:10px;background:#fff;display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:13px;cursor:pointer;overflow:hidden;transition:border-color .15s, background .15s, color .15s}
+    .poll-option .bar{position:absolute;inset:0;background:linear-gradient(90deg,rgba(38,148,213,.18),rgba(2,128,202,.22));opacity:0.6;transform-origin:left;transition:transform .3s;width:var(--pct,0%);pointer-events:none}
+    .poll-option .label{position:relative;z-index:1;font-weight:700;color:inherit;flex:1;text-align:left}
+    .poll-option .votes{position:relative;z-index:1;font-size:11px;color:var(--muted);font-weight:700}
+    .poll-option.selected{border-color:var(--accent);color:#0f3c55;background:#eaf5fc}
+    .poll-option.closed{cursor:default;opacity:.7}
+    .poll-option.can-vote:hover{border-color:var(--accent);background:#edf7ff}
+    .poll-meta{font-size:11px;color:var(--muted);display:flex;gap:8px;flex-wrap:wrap}
+    .poll-meta strong{color:#0f3c55}
+
     /* Replying-to line */
     .replying-to{
       font-size:12px;
@@ -277,6 +290,14 @@
     #loadMore{ margin:8px var(--inner) 12px; }
     input[type="text"], textarea{ padding:10px 12px; }
 
+    #pollBuilder{display:none;flex-direction:column;gap:10px;border:1px dashed #c9e5f8;background:#f7fbff;border-radius:14px;padding:14px;margin-top:-4px}
+    #pollBuilder h3{margin:0;font-size:14px;color:#0f3c55}
+    .poll-builder-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+    .poll-option-input{display:flex;gap:8px;align-items:center;width:100%}
+    .poll-option-input input{flex:1}
+    .poll-option-input button{min-width:40px;padding:8px 10px}
+    .poll-option-input button.remove{background:#fdecea;border-color:#f5b7af;color:#d93025}
+
     @media (max-width:640px){
       .avatar{ width:28px; height:28px; flex-basis:28px; }
       .meta, .action{ font-size:10px; }
@@ -348,6 +369,22 @@
         </div>
       </div>
 
+      <div id="pollBuilder" class="row" style="display:none;flex-direction:column;align-items:stretch;gap:10px">
+        <div class="poll-builder-row" style="justify-content:space-between">
+          <h3>Create poll</h3>
+          <span class="limits">2–8 options · 80 chars max</span>
+        </div>
+        <input id="pollQuestion" type="text" placeholder="Poll question" maxlength="200"/>
+        <div id="pollOptionsWrap" style="display:flex;flex-direction:column;gap:8px"></div>
+        <div class="poll-builder-row" style="justify-content:space-between">
+          <button id="btnPollAddOption" class="btn">Add option</button>
+          <div style="display:flex;gap:8px;margin-left:auto">
+            <button id="btnPollCancel" class="btn">Cancel</button>
+            <button id="btnPollSend" class="btn primary">Send poll</button>
+          </div>
+        </div>
+      </div>
+
       <div class="row row-slim">
         <label for="file" class="btn file-btn" id="btnChoose">Choose image</label>
         <input id="file" type="file" accept="image/*"/>
@@ -363,6 +400,7 @@
             <input type="checkbox" id="sendAutoPin">
             Auto pin
           </label>
+          <button id="btnCreatePoll" class="btn" style="display:none">Create poll</button>
           <button id="btnSend" class="btn primary">Send</button>
         </div>
       </div>
@@ -392,6 +430,6 @@
     </section>
   </main>
 
-<script src="index.js?v=41"></script>
+<script src="index.js?v=42"></script>
 </body>
 </html>
