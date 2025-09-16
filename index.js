@@ -11,8 +11,15 @@ const EMBED_HOST_HINT = new URLSearchParams(location.search).get('embedHost') ||
 
 /* ===== Constants ===== */
 const WORKER_URL    = "https://twikoo-cloudflare.ertertertet07.workers.dev";
-const PAGE_URL_PATH = "/chatboard/";
 const PAGE_HREF     = "https://htmlunblockedgames.github.io/chatboard/";
+const ROOM_OPTIONS = {
+  chat: { id: 'chat', label: 'Chat', path: '/chatboard/' },
+  tracks: { id: 'tracks', label: 'Track Sharing', path: '/tracks/' }
+};
+const ROOM_STORAGE_KEY = 'chat_room';
+let currentRoomId = localStorage.getItem(ROOM_STORAGE_KEY);
+if (!ROOM_OPTIONS[currentRoomId]) currentRoomId = 'chat';
+let PAGE_URL_PATH = ROOM_OPTIONS[currentRoomId].path;
 const MAX_FILE_MB   = 7;
 const MAX_CHARS     = 2000;
 const ADMIN_NICK    = "Poly Track Administrator";
@@ -44,12 +51,13 @@ const __parentRef = EMBED_HOST_HINT || document.referrer || "";
 const __ancestor = (document.location && document.location.ancestorOrigins && document.location.ancestorOrigins.length)
   ? document.location.ancestorOrigins[0] : "";
 
-const WS_ENDPOINT =
-  WORKER_URL.replace(/^http/i, 'ws').replace(/\/$/, '') +
-  '/ws?room=' + encodeURIComponent(PAGE_URL_PATH) +
-  '&parent=' + encodeURIComponent(__parentRef) +
-  '&ancestor=' + encodeURIComponent(__ancestor) +
-  (EMBED_HOST_HINT ? ('&parentHint=' + encodeURIComponent(EMBED_HOST_HINT)) : '');
+function buildWsEndpoint(){
+  return WORKER_URL.replace(/^http/i, 'ws').replace(/\/$/, '') +
+    '/ws?room=' + encodeURIComponent(PAGE_URL_PATH) +
+    '&parent=' + encodeURIComponent(__parentRef) +
+    '&ancestor=' + encodeURIComponent(__ancestor) +
+    (EMBED_HOST_HINT ? ('&parentHint=' + encodeURIComponent(EMBED_HOST_HINT)) : '');
+}
 
 let ws = null, wsPing = null, wsBackoff = 500;
 
@@ -134,7 +142,8 @@ function queueRefresh(delay = 120){
 
 function connectWS(){
   try{
-    ws = new WebSocket(WS_ENDPOINT);
+    const endpoint = buildWsEndpoint();
+    ws = new WebSocket(endpoint);
     ws.onopen = () => {
       wsBackoff = 500;
       if (connEl){ connEl.textContent = "Live: Connected"; connEl.classList.add("ok"); connEl.classList.remove("bad"); }
@@ -204,6 +213,8 @@ const messagesEl=$("messages"), loadMoreBtn=$("loadMore");
 const nickEl=$("nick"), textEl=$("text");
 const fileEl=$("file"), btnAttach=$("btnAttach"), btnSend=$("btnSend");
 const fileInfo=$("fileInfo"), statusEl=$("status"), connEl=$("conn");
+const roomPanel=$("roomPanel");
+const roomButtons = roomPanel ? Array.from(roomPanel.querySelectorAll('[data-room]')) : [];
 
 const adminPanel=$("adminPanel"), adminPass=$("adminPass"), btnAdminLogin=$("btnAdminLogin"),
       btnAdminLogout=$("btnAdminLogout"), adminLoginRow=$("adminLoginRow"),
@@ -222,6 +233,73 @@ const embedBox=$("embedBox"), embedModeEl=$("embedMode"),
 
 const limitMbEl=$("limitMb"), limitChars=$("limitChars"), limitChars2=$("limitChars2"), charCount=$("charCount");
 const replyTo=$("replyTo"), replyName=$("replyName"), replyCancel=$("replyCancel");
+
+function updateRoomButtonUI(){
+  roomButtons.forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.room === currentRoomId);
+  });
+}
+
+function closeWS(){
+  if (wsPing) { clearInterval(wsPing); wsPing = null; }
+  if (ws) {
+    try { ws.onclose = null; ws.onerror = null; } catch {}
+    try { ws.close(); } catch {}
+  }
+  ws = null;
+}
+
+function resetRoomState(){
+  state.all.clear();
+  state.roots = [];
+  state.childrenByRoot.clear();
+  state.parentOf.clear();
+  prevChildCounts.clear();
+  expanded.clear();
+  sessionAnimatedPinned.clear();
+  animatedOnce.clear();
+  mustAnimate.clear();
+  seenIds.clear();
+  glowActive.clear();
+  pendingLikes.clear();
+  pendingPollVotes.clear();
+  serverCounts = null;
+  loading = false;
+  replyTarget = null;
+  seededChildCounts = false;
+  firstLoadDone = false;
+  currentPage = 1;
+  if (messagesEl) messagesEl.innerHTML = '';
+  if (loadMoreBtn) {
+    loadMoreBtn.style.display = 'none';
+    loadMoreBtn.disabled = false;
+  }
+  setStatus('');
+  __refreshQueued = false;
+  __refreshInFlight = false;
+  if (__refreshTimer) { clearTimeout(__refreshTimer); __refreshTimer = null; }
+}
+
+function switchRoom(roomId){
+  if (!ROOM_OPTIONS[roomId] || roomId === currentRoomId) return;
+  currentRoomId = roomId;
+  localStorage.setItem(ROOM_STORAGE_KEY, currentRoomId);
+  PAGE_URL_PATH = ROOM_OPTIONS[currentRoomId].path;
+  updateRoomButtonUI();
+  resetRoomState();
+  wsBackoff = 500;
+  closeWS();
+  connectWS();
+  runRefresh().catch(()=>{});
+}
+
+roomButtons.forEach(btn => {
+  if (!btn.dataset.boundRoom) {
+    btn.dataset.boundRoom = '1';
+    btn.addEventListener('click', () => switchRoom(btn.dataset.room));
+  }
+});
+updateRoomButtonUI();
 if (loadMoreBtn && !loadMoreBtn.dataset.boundLoadMore){
   loadMoreBtn.dataset.boundLoadMore = '1';
   loadMoreBtn.addEventListener('click', async () => {

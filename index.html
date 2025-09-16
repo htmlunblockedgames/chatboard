@@ -167,6 +167,17 @@
     .sort-btn:hover{background:#e9f1fb;border-color:#cde1ff;color:#0f3c55}
     .sort-btn.active{background:linear-gradient(180deg,var(--accent),var(--accent-2));color:#fff;border-color:#197fb4;box-shadow:0 4px 10px rgba(38,148,213,.25);}
 
+    .room-panel{display:flex;align-items:center;gap:12px;padding:12px 18px;margin-top:-6px}
+    .room-panel .label{font-size:12px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.08em}
+    .room-buttons{display:flex;gap:8px;flex-wrap:wrap}
+    .room-btn{
+      padding:6px 14px;border-radius:999px;border:1px solid var(--border);
+      background:#f5f7fa;color:var(--muted);font-size:12px;font-weight:700;cursor:pointer;
+      transition:background .15s,border-color .15s,color .15s;
+    }
+    .room-btn:hover{background:#e9f1fb;border-color:#cde1ff;color:#0f3c55}
+    .room-btn.active{background:linear-gradient(180deg,var(--accent),var(--accent-2));color:#fff;border-color:#197fb4;box-shadow:0 4px 10px rgba(38,148,213,.25);}
+
     /* Replies container */
     .replies{display:none; margin-top:10px; margin-left:52px; padding-left:0; flex-direction:column; gap:10px}
 
@@ -411,6 +422,14 @@
           <span id="charCount">0</span>/<span id="limitChars2">2000</span>
         </span>
         <span id="status" style="margin-left:auto"></span>
+      </div>
+    </section>
+
+    <section id="roomPanel" class="panel room-panel">
+      <span class="label">Rooms</span>
+      <div class="room-buttons">
+        <button class="room-btn" data-room="chat">Chat</button>
+        <button class="room-btn" data-room="tracks">Track Sharing</button>
       </div>
     </section>
 
