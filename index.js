@@ -903,15 +903,17 @@ function maybeAnimateMessage(c, bodyEl){
   if (forced) {
     // Always animate if mustAnimate is set (new admin or pinned)
     // Do not block on sessionAnimatedPinned or animatedOnce
+    if (isPinned) sessionAnimatedPinned.add(idStr);
+    else animatedOnce.add(idStr);
   } else if (isPinned) {
     // Pinned admin messages: animate once per session
-    if (sessionAnimatedPinned.has(c.id)) return;
-    sessionAnimatedPinned.add(c.id);
+    if (sessionAnimatedPinned.has(idStr)) return;
+    sessionAnimatedPinned.add(idStr);
   } else {
     // Non-pinned: animate only once per client
-    if (animatedOnce.has(c.id)) return;
+    if (animatedOnce.has(idStr)) return;
     if (!isNewToClient) return;
-    animatedOnce.add(c.id);
+    animatedOnce.add(idStr);
   }
 
   // Run after layout so overlay aligns perfectly with text baselines
