@@ -29,21 +29,53 @@ function renderDisallowedRedirect(){
   body.style.display = "flex";
   body.style.alignItems = "center";
   body.style.justifyContent = "center";
-  body.style.background = "#fafafa";
+  body.style.background = "#f5f7fb";
   body.style.fontFamily = 'Inter, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif';
+  body.style.color = '#1f2125';
+
+  const wrap = document.createElement('div');
+  wrap.style.display = 'flex';
+  wrap.style.flexDirection = 'column';
+  wrap.style.gap = '16px';
+  wrap.style.alignItems = 'center';
+  wrap.style.padding = '32px';
+  wrap.style.borderRadius = '16px';
+  wrap.style.border = '1px solid #d4deee';
+  wrap.style.background = '#ffffff';
+  wrap.style.boxShadow = '0 12px 28px rgba(15, 60, 85, 0.08)';
+
+  const warn = document.createElement('div');
+  warn.textContent = 'This chatboard is only available on the official Poly Track site.';
+  warn.style.fontSize = '17px';
+  warn.style.fontWeight = '700';
+  warn.style.textAlign = 'center';
+  warn.style.maxWidth = '320px';
+
+  const hint = document.createElement('div');
+  hint.textContent = 'Please continue on the official page to join the conversation.';
+  hint.style.fontSize = '14px';
+  hint.style.textAlign = 'center';
+  hint.style.color = '#5f6369';
+  hint.style.maxWidth = '320px';
+
   const link = document.createElement('a');
   link.href = REDIRECT_URL;
   link.rel = 'noopener noreferrer';
-  link.textContent = 'Open Poly Track Chatboard';
-  link.style.fontSize = '16px';
+  link.target = '_top';
+  link.textContent = 'Go to Poly Track Chatboard';
+  link.style.fontSize = '15px';
   link.style.fontWeight = '700';
-  link.style.color = '#0f3c55';
+  link.style.color = '#ffffff';
   link.style.textDecoration = 'none';
-  link.style.padding = '12px 18px';
-  link.style.borderRadius = '12px';
-  link.style.border = '1px solid #c5d9ef';
-  link.style.background = '#eaf5fc';
-  body.appendChild(link);
+  link.style.padding = '12px 22px';
+  link.style.borderRadius = '999px';
+  link.style.background = 'linear-gradient(180deg,#2694d5,#0280ca)';
+  link.style.boxShadow = '0 8px 18px rgba(38,148,213,0.25)';
+
+  wrap.appendChild(warn);
+  wrap.appendChild(hint);
+  wrap.appendChild(link);
+  body.appendChild(wrap);
 }
 
 /* ===== Pagination config ===== */
