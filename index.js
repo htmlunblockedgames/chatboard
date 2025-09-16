@@ -18,65 +18,6 @@ const MAX_CHARS     = 2000;
 const ADMIN_NICK    = "Poly Track Administrator";
 const MIN_POLL_OPTIONS = 2;
 const MAX_POLL_OPTIONS = 8;
-const REDIRECT_URL  = "https://sites.google.com/view/poly-track/chatboard";
-
-function renderDisallowedRedirect(){
-  if (!document || !document.body) return;
-  const body = document.body;
-  body.innerHTML = "";
-  body.style.margin = "0";
-  body.style.minHeight = "100vh";
-  body.style.display = "flex";
-  body.style.alignItems = "center";
-  body.style.justifyContent = "center";
-  body.style.background = "#f5f7fb";
-  body.style.fontFamily = 'Inter, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif';
-  body.style.color = '#1f2125';
-
-  const wrap = document.createElement('div');
-  wrap.style.display = 'flex';
-  wrap.style.flexDirection = 'column';
-  wrap.style.gap = '16px';
-  wrap.style.alignItems = 'center';
-  wrap.style.padding = '32px';
-  wrap.style.borderRadius = '16px';
-  wrap.style.border = '1px solid #d4deee';
-  wrap.style.background = '#ffffff';
-  wrap.style.boxShadow = '0 12px 28px rgba(15, 60, 85, 0.08)';
-
-  const warn = document.createElement('div');
-  warn.textContent = 'This chatboard is only available on the official Poly Track site.';
-  warn.style.fontSize = '17px';
-  warn.style.fontWeight = '700';
-  warn.style.textAlign = 'center';
-  warn.style.maxWidth = '320px';
-
-  const hint = document.createElement('div');
-  hint.textContent = 'Please continue on the official page to join the conversation.';
-  hint.style.fontSize = '14px';
-  hint.style.textAlign = 'center';
-  hint.style.color = '#5f6369';
-  hint.style.maxWidth = '320px';
-
-  const link = document.createElement('a');
-  link.href = REDIRECT_URL;
-  link.rel = 'noopener noreferrer';
-  link.target = '_top';
-  link.textContent = 'Go to Poly Track Chatboard';
-  link.style.fontSize = '15px';
-  link.style.fontWeight = '700';
-  link.style.color = '#ffffff';
-  link.style.textDecoration = 'none';
-  link.style.padding = '12px 22px';
-  link.style.borderRadius = '999px';
-  link.style.background = 'linear-gradient(180deg,#2694d5,#0280ca)';
-  link.style.boxShadow = '0 8px 18px rgba(38,148,213,0.25)';
-
-  wrap.appendChild(warn);
-  wrap.appendChild(hint);
-  wrap.appendChild(link);
-  body.appendChild(wrap);
-}
 
 /* ===== Pagination config ===== */
 const PAGE_SIZE = 10;
@@ -175,7 +116,6 @@ function updatePresenceUI(users, tabs){
 /* Debounced refresh utility to prevent overlapping loads */
 let __refreshTimer = null, __refreshInFlight = false, __refreshQueued = false;
 async function runRefresh() {
-  if (isDisallowedSite) return;
   if (__refreshInFlight) { __refreshQueued = true; return; }
   __refreshInFlight = true;
   try { await refreshAdminStatus(); } catch {}
@@ -188,13 +128,11 @@ async function runRefresh() {
   }
 }
 function queueRefresh(delay = 120){
-  if (isDisallowedSite) return;
   if (__refreshTimer) clearTimeout(__refreshTimer);
   __refreshTimer = setTimeout(runRefresh, delay);
 }
 
 function connectWS(){
-  if (isDisallowedSite) return;
   try{
     ws = new WebSocket(WS_ENDPOINT);
     ws.onopen = () => {
@@ -340,44 +278,12 @@ const onlineUsersEl=$("onlineUsers"), onlineTabsEl=$("onlineTabs");
 /* Show admin panel on ?admin=1 at /chatboard/ (and always if logged in) */
 const ADMIN_PARAM = new URLSearchParams(window.location.search).get("admin");
 const host = window.location.hostname;
-const pathRaw = window.location.pathname || "";
-const pathNormalized = (() => {
-  const raw = String(pathRaw || '/');
-  const withoutTrailing = raw.replace(/\/+$/, '');
-  return withoutTrailing || '/';
-})();
-const pathWithSlash = pathNormalized === '/' ? '/' : `${pathNormalized}/`;
-const normalizeTargetPath = (target) => {
-  const base = String(target || '/').replace(/\/+$/, '');
-  return base || '/';
-};
-const matchesPath = (target) => {
-  const normalizedTarget = normalizeTargetPath(target);
-  if (normalizedTarget === '/') return pathNormalized === '/' || pathWithSlash === '/';
-  const targetWithSlash = `${normalizedTarget}/`;
-  return pathNormalized === normalizedTarget || pathWithSlash === targetWithSlash;
-};
-const isProdRoute = host === "htmlunblockedgames.github.io" && (
-  matchesPath('/chatboard') ||
-  matchesPath('/chatboard/') ||
-  matchesPath('/chatboard/index.html')
-);
-const isPolyEmbed = host === "sites.google.com" && (
-  matchesPath('/view/poly-track') ||
-  matchesPath('/view/poly-track/') ||
-  matchesPath('/view/poly-track/index.html') ||
-  pathNormalized.startsWith('/view/poly-track/')
-);
+const path = (window.location.pathname || "").replace(/\/+$/, '/') || '/';
+const isProdRoute = host === "htmlunblockedgames.github.io" && path === "/chatboard/";
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "0.0.0.0", "::1"]);
 const isLocalHost = LOCAL_HOSTS.has(host);
 const SHOW_ADMIN_PANEL = ADMIN_PARAM === "1" && (isProdRoute || isLocalHost);
 if (adminPanel) adminPanel.style.display = SHOW_ADMIN_PANEL ? "grid" : "none";
-
-const isDisallowedSite = !(isProdRoute || isLocalHost || isPolyEmbed);
-if (isDisallowedSite) {
-  renderDisallowedRedirect();
-  window.__CHATBOARD_BLOCKED__ = true;
-} else {
 
 /* Ensure WS starts once */
 if (!window.__wsStarted) { window.__wsStarted = true; try { connectWS(); } catch {} }
@@ -659,9 +565,6 @@ function armConfirmButton(btn, label = 'Are you sure?', ms = 3000){
 
 /* ===== API ===== */
 async function api(eventObj){
-  if (isDisallowedSite) {
-    return { code: 403, message: 'This chatboard is only available at the official site.', redirect: REDIRECT_URL };
-  }
   const body = { ...eventObj };
   if (body.url == null) body.url = PAGE_URL_PATH;
   if (TK_TOKEN) { body.accessToken = TK_TOKEN; body.token = TK_TOKEN; }
@@ -1544,7 +1447,6 @@ function renderAllIncremental(){
 
 /* ===== Loading ===== */
 async function loadLatest(allPages = false){
-  if (isDisallowedSite) return;
   if (loading) return;
   loading = true;
   try{
@@ -1708,7 +1610,3 @@ btnSend && btnSend.addEventListener('click', async()=>{
   if (!connEl) return;
   connEl.textContent = ws && ws.readyState===1 ? "Live: Connected" : "Live: Connecting…";
 })();
-
-runRefresh().catch(()=>{});
-
-}
