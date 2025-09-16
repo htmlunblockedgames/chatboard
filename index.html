@@ -97,7 +97,7 @@
     }
     .pin-badge{
       position:absolute;
-      top:6px; right:8px;
+      top:12px; right:8px;
       font-size:11px; font-weight:800;
       color:#8a6a00;
       background:#fff6c2;
@@ -116,7 +116,7 @@
     .bubble{flex:1;min-width:0}
     .meta{font-size:12px;color:var(--muted);display:flex;gap:10px;align-items:center}
     .nick{color:#1f2127;font-weight:800}
-    .content{margin-top:6px;line-height:1.58;word-wrap:break-word; position:relative}
+    .content{margin-top:6px;line-height:1.58;word-wrap:break-word;overflow-wrap:anywhere;word-break:break-word; position:relative}
     .content img{max-width:480px;border-radius:10px;border:1px solid var(--border);display:block;margin:8px 0;background:#fafafa}
 
     /* Replying-to line */
@@ -136,6 +136,23 @@
       user-select:none;
     }
     .action:hover{background:#f8f8f8}
+    .action.like-button{display:inline-flex;align-items:center;gap:6px;min-width:56px;justify-content:center;transition:color .2s, border-color .2s;}
+    .action.like-button .heart{font-size:14px;transition:transform .2s,color .2s;}
+    .action.like-button .count{font-size:12px;min-width:1.2em;text-align:center;}
+    .action.like-button.liked{color:#d93025;border-color:#f5b7af;background:#fdecea;}
+    .action.like-button.liked .heart{color:#d93025;transform:scale(1.1);}
+    .action.like-button.loading{opacity:.6;pointer-events:none;}
+
+    .sort-panel{display:flex;align-items:center;gap:12px;padding:12px 18px;margin-top:-6px}
+    .sort-panel .label{font-size:12px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.08em}
+    .sort-buttons{display:inline-flex;gap:8px}
+    .sort-btn{
+      padding:6px 14px;border-radius:999px;border:1px solid var(--border);
+      background:#f5f7fa;color:var(--muted);font-size:12px;font-weight:700;cursor:pointer;
+      transition:background .15s,border-color .15s,color .15s;
+    }
+    .sort-btn:hover{background:#e9f1fb;border-color:#cde1ff;color:#0f3c55}
+    .sort-btn.active{background:linear-gradient(180deg,var(--accent),var(--accent-2));color:#fff;border-color:#197fb4;box-shadow:0 4px 10px rgba(38,148,213,.25);}
 
     /* Replies container */
     .replies{display:none; margin-top:10px; margin-left:52px; padding-left:0; flex-direction:column; gap:10px}
@@ -250,6 +267,8 @@
       display: inline-block;
       vertical-align: baseline;
       contain: layout paint;
+      overflow-wrap:anywhere;
+      word-break:break-word;
     }
     .content img{ max-width:420px; margin:6px 0; }
     .actions{ margin-top:4px; gap:10px; }
@@ -354,6 +373,15 @@
           <span id="charCount">0</span>/<span id="limitChars2">2000</span>
         </span>
         <span id="status" style="margin-left:auto"></span>
+      </div>
+    </section>
+
+    <section id="sortPanel" class="panel sort-panel">
+      <span class="label">Sort</span>
+      <div class="sort-buttons">
+        <button class="sort-btn" data-sort="newest">Newest</button>
+        <button class="sort-btn" data-sort="oldest">Oldest</button>
+        <button class="sort-btn" data-sort="likes">Most Likes</button>
       </div>
     </section>
 

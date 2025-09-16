@@ -58,6 +58,42 @@ const VID = (() => {
   return v;
 })();
 
+const LIKE_KEY = (() => {
+  let v = localStorage.getItem('chat_like_key');
+  if (!v) {
+    v = 'lk_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+    localStorage.setItem('chat_like_key', v);
+  }
+  return v;
+})();
+
+const SORT_MODES = ['newest', 'oldest', 'likes'];
+let currentSort = localStorage.getItem('chat_sort');
+if (!SORT_MODES.includes(currentSort)) currentSort = 'newest';
+
+const sortPanelEl = document.getElementById('sortPanel');
+const sortButtons = sortPanelEl ? Array.from(sortPanelEl.querySelectorAll('[data-sort]')) : [];
+
+function applySortUI(){
+  sortButtons.forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.sort === currentSort);
+  });
+}
+
+function setSort(mode){
+  if (!SORT_MODES.includes(mode) || mode === currentSort) return;
+  currentSort = mode;
+  localStorage.setItem('chat_sort', currentSort);
+  applySortUI();
+  currentPage = 1;
+  loadLatest(true);
+}
+
+sortButtons.forEach(btn => {
+  btn.addEventListener('click', () => setSort(btn.dataset.sort));
+});
+applySortUI();
+
 function updatePresenceUI(users, tabs){
   try{
     if (onlineUsersEl) onlineUsersEl.textContent = String(users || 0);
@@ -105,6 +141,10 @@ function connectWS(){
         /* >>> Added: presence/hello handling */
         if (msg && (msg.type === 'hello' || msg.type === 'presence')) {
           updatePresenceUI(msg.users|0, msg.tabs|0);
+          return;
+        }
+        if (msg && msg.type === 'like' && msg.id) {
+          updateCommentLikes(String(msg.id), msg.likes);
           return;
         }
         /* <<< Added */
@@ -211,17 +251,20 @@ function updateLoadMoreVisibility(){
   loadMoreBtn.style.display = loadedNow < nonPinnedTotal ? 'inline-flex' : 'none';
 }
 async function fetchPage(p){
-  return await api({ event:'COMMENT_GET', page: Math.max(1, Number(p) || 1), pageSize: PAGE_SIZE });
+  return await api({ event:'COMMENT_GET', page: Math.max(1, Number(p) || 1), pageSize: PAGE_SIZE, likeKey: LIKE_KEY, sort: currentSort });
 }
 /* >>> Added: presence DOM refs */
 const onlineUsersEl=$("onlineUsers"), onlineTabsEl=$("onlineTabs");
 /* <<< Added */
 
 /* Show admin panel on ?admin=1 at /chatboard/ (and always if logged in) */
-const SHOW_ADMIN_PANEL =
-  window.location.hostname === "htmlunblockedgames.github.io" &&
-  window.location.pathname === "/chatboard/" &&
-  new URLSearchParams(window.location.search).get("admin") === "1";
+const ADMIN_PARAM = new URLSearchParams(window.location.search).get("admin");
+const host = window.location.hostname;
+const path = (window.location.pathname || "").replace(/\/+$/, '/') || '/';
+const isProdRoute = host === "htmlunblockedgames.github.io" && path === "/chatboard/";
+const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "0.0.0.0", "::1"]);
+const isLocalHost = LOCAL_HOSTS.has(host);
+const SHOW_ADMIN_PANEL = ADMIN_PARAM === "1" && (isProdRoute || isLocalHost);
 if (adminPanel) adminPanel.style.display = SHOW_ADMIN_PANEL ? "grid" : "none";
 
 /* Ensure WS starts once */
@@ -252,6 +295,8 @@ const sessionAnimatedPinned = new Set();
 const animatedOnce = new Set();
 const mustAnimate = new Set();
 const seenIds = new Set();
+const glowActive = new Map(); // id -> { startedAt, duration }
+const pendingLikes = new Set();
 let firstLoadDone = false;
 
 /* ===== UI helpers ===== */
@@ -561,29 +606,62 @@ function createGlowOverlayOn(targetEl){
   return ov;
 }
 
-// Compute per-element sweep duration so small text finishes ~2s, long text scales with a constant px/s speed
-function computeGlowSeconds(targetEl){
-  try{
-    const rect = targetEl.getBoundingClientRect();
-    const cs = getComputedStyle(targetEl);
-    // Fallback line-height if 'normal'
-    const lh = parseFloat(cs.lineHeight) || (parseFloat(cs.fontSize) * 1.4) || 18;
-    const w = Math.max(1, rect.width);
-    // Sweep travels from -60% to 160% => ~220% of element width
-    const travelPx = 2.2 * w;
-    const PX_PER_SEC = 220; // standard sweep speed
-    const dur = Math.max(2, travelPx / PX_PER_SEC);
-    return dur;
-  }catch{ return 2; }
+// Fixed sweep duration so every glow plays for the same length
+function computeGlowSeconds(){ return 2.5; }
+
+function resumeGlow(idStr, bodyEl, state){
+  if (!state) return false;
+  const now = performance.now();
+  const duration = Number(state.duration) || computeGlowSeconds();
+  const elapsed = Math.max(0, (now - Number(state.startedAt || 0)) / 1000);
+  if (elapsed >= duration) {
+    glowActive.delete(idStr);
+    return false;
+  }
+
+  const targets = bodyEl.querySelectorAll('.glow-target');
+  const list = [...targets].filter(el => (el.textContent || '').trim().length);
+  if (!list.length) return false;
+
+  const remaining = Math.max(0, duration - elapsed);
+  list.forEach((tgt) => {
+    const ov = createGlowOverlayOn(tgt);
+    if (!ov) return;
+    ov.style.setProperty('--glow-dur', duration + 's');
+    ov.style.animation = 'none';
+    void ov.offsetWidth;
+    ov.style.animation = `glowSweep ${duration}s ease-in-out forwards`;
+    ov.style.animationDelay = `${-elapsed}s`;
+    setTimeout(() => {
+      requestAnimationFrame(() => { ov.style.opacity = '0'; });
+    }, Math.round(remaining * 1000));
+    setTimeout(() => {
+      if (ov && ov.parentNode) ov.parentNode.removeChild(ov);
+    }, Math.round(remaining * 1000 + 1600));
+  });
+
+  const totalRemaining = Math.round(Math.max(0, (state.startedAt + duration * 1000 + 1600) - now));
+  setTimeout(() => { glowActive.delete(idStr); }, totalRemaining);
+  return true;
 }
 
 function maybeAnimateMessage(c, bodyEl){
   // Only admin messages glow, for all users
   if (!authorIsAdmin(c)) return;
 
-  const forced       = mustAnimate.has(String(c.id));
+  const idStr = String(c.id);
+  const forced       = mustAnimate.has(idStr);
   const isPinned     = !!c.top;
-  const isNewToClient= !seenIds.has(String(c.id));
+  const isNewToClient= !seenIds.has(idStr);
+
+  const active = glowActive.get(idStr);
+  if (active) {
+    if (!bodyEl.querySelector('.glow-overlay')) {
+      resumeGlow(idStr, bodyEl, active);
+    }
+    if (forced) mustAnimate.delete(idStr);
+    return;
+  }
 
   if (forced) {
     // Always animate if mustAnimate is set (new admin or pinned)
@@ -603,12 +681,18 @@ function maybeAnimateMessage(c, bodyEl){
   requestAnimationFrame(() => {
     const targets = bodyEl.querySelectorAll('.glow-target');
     const list = [...targets].filter(el => (el.textContent || '').trim().length);
-    if (!list.length) { if (forced) mustAnimate.delete(String(c.id)); return; }
+    if (!list.length) {
+      if (forced) mustAnimate.delete(idStr);
+      glowActive.delete(idStr);
+      return;
+    }
 
+    let longest = 0;
     list.forEach((tgt) => {
       const ov = createGlowOverlayOn(tgt);
       if (!ov) return;
       const dur = computeGlowSeconds(tgt);
+      if (dur > longest) longest = dur;
       ov.style.setProperty('--glow-dur', dur + 's');
       // Restart sweep reliably and use per-element duration with ease-in-out
       ov.style.animation = 'none';
@@ -623,15 +707,99 @@ function maybeAnimateMessage(c, bodyEl){
       setTimeout(cleanup, Math.round(dur * 1000 + 1600));
     });
 
-    if (forced) mustAnimate.delete(String(c.id));
+    const duration = longest || computeGlowSeconds();
+    glowActive.set(idStr, { startedAt: performance.now(), duration });
+    if (forced) mustAnimate.delete(idStr);
+    const totalMs = Math.round(duration * 1000 + 1600);
+    setTimeout(() => { glowActive.delete(idStr); }, totalMs);
   });
+}
+
+function updateLikeButtonVisual(btn, likes, liked){
+  if (!btn) return;
+  const heart = btn.querySelector('.heart');
+  const count = btn.querySelector('.count');
+  if (heart) heart.textContent = liked ? '♥' : '♡';
+  if (count) count.textContent = String(Number(likes) || 0);
+  btn.classList.toggle('liked', !!liked);
+}
+
+function updateCommentLikes(id, likes, liked){
+  const comment = state.all.get(String(id));
+  if (comment) {
+    comment.likes = Number(likes) || 0;
+    if (liked !== undefined) comment.liked = !!liked;
+  }
+  const msg = messagesEl && messagesEl.querySelector(`.msg[data-id="${id}"]`);
+  if (!msg) return;
+  const btn = msg.querySelector('.like-button');
+  if (!btn) return;
+  const current = comment ? comment.liked : (liked !== undefined ? liked : btn.classList.contains('liked'));
+  const appliedLikes = comment ? comment.likes : Number(likes) || 0;
+  updateLikeButtonVisual(btn, appliedLikes, current);
+}
+
+async function toggleLike(commentId){
+  const id = String(commentId);
+  if (pendingLikes.has(id)) return;
+  const comment = state.all.get(id);
+  if (!comment) return;
+  const desired = !comment.liked;
+  const msg = messagesEl && messagesEl.querySelector(`.msg[data-id="${id}"]`);
+  const btn = msg && msg.querySelector('.like-button');
+  pendingLikes.add(id);
+  if (btn) btn.classList.add('loading');
+  try {
+    const res = await api({ event:'COMMENT_LIKE', id, like: desired, likeKey: LIKE_KEY });
+    if (res && res.code === 0 && res.data) {
+      updateCommentLikes(id, res.data.likes, res.data.liked);
+    } else if (res && res.message) {
+      setStatus(res.message, true);
+    } else {
+      setStatus('Failed to update like', true);
+    }
+  } catch (e){
+    setStatus(e && e.message ? e.message : 'Failed to update like', true);
+  } finally {
+    pendingLikes.delete(id);
+    if (btn) btn.classList.remove('loading');
+  }
+}
+
+function ensureLikeButton(actions, comment){
+  let btn = actions.querySelector(':scope > .like-button');
+  if (!btn) {
+    btn = document.createElement('span');
+    btn.className = 'action like-button';
+    const heart = document.createElement('span');
+    heart.className = 'heart';
+    const count = document.createElement('span');
+    count.className = 'count';
+    btn.appendChild(heart);
+    btn.appendChild(count);
+    if (actions.firstChild) actions.insertBefore(btn, actions.firstChild);
+    else actions.appendChild(btn);
+    btn.addEventListener('click', (evt)=>{
+      evt.preventDefault();
+      evt.stopPropagation();
+      const cid = btn.dataset.commentId;
+      if (cid) toggleLike(cid);
+    });
+  }
+  btn.dataset.commentId = String(comment.id);
+  updateLikeButtonVisual(btn, comment.likes || 0, comment.liked);
+  return btn;
 }
 
 /* ===== Build & render ===== */
 function buildThread(data){
   state.all.clear(); state.roots = []; state.childrenByRoot.clear(); state.parentOf.clear();
   const arr = Array.isArray(data?.comments) ? data.comments : [];
-  for (const c of arr) state.all.set(c.id, c);
+  for (const c of arr) {
+    c.likes = Number(c.likes || 0);
+    c.liked = !!c.liked;
+    state.all.set(c.id, c);
+  }
   const roots = arr.filter(c => !c.rid);
   state.roots = roots;
   for (const c of arr){
@@ -645,62 +813,12 @@ function buildThread(data){
 }
 
 
-function renderOne(c){
-  const msg = document.createElement('div'); msg.className = 'msg'; msg.dataset.id = c.id;
-  if (c.top) {
-    const badge = document.createElement('span'); badge.className='pin-badge'; badge.textContent='PINNED';
-    msg.appendChild(badge);
-  }
+function buildActions(c, repliesWrap){
+  const actions = document.createElement('div');
+  actions.className = 'actions';
+  actions.dataset.role = 'actions';
 
-  const av = document.createElement('div'); av.className = 'avatar'; if (authorIsAdmin(c)) { av.classList.add('admin'); av.textContent='</>'; }
-  else { av.textContent = initialOf(c.nick); }
-  msg.appendChild(av);
-
-  const bubble = document.createElement('div'); bubble.className='bubble';
-  const meta = document.createElement('div'); meta.className='meta';
-  const nick = document.createElement('span'); nick.className='nick'; nick.textContent = c.nick || 'Anonymous';
-  if (authorIsAdmin(c)) nick.classList.add('admin-glow');
-
-  // Build location (admin-only), no IP, e.g., "City, Region, Country"
-  let locText = '';
-  if (isAdmin) {
-    const parts = [];
-    if (c.city) parts.push(c.city);
-    if (c.region) parts.push(c.region);
-    if (c.country) parts.push(c.country);
-    locText = parts.join(', ');
-  }
-
-  const time = document.createElement('span');
-  time.textContent = new Date(c.created || Date.now()).toLocaleString();
-
-  // Order: username, (· location), time
-  meta.appendChild(nick);
-  if (isAdmin && locText) {
-    const locSpan = document.createElement('span');
-    locSpan.className = 'loc';
-    locSpan.textContent = '· ' + locText;
-    meta.appendChild(locSpan);
-  }
-  meta.appendChild(time);
-  bubble.appendChild(meta);
-
-  const content = document.createElement('div'); content.className='content';
-  const body = renderSafeContent(c.content, { allowLinks:true, allowEmbeds: authorIsAdmin(c) });
-  content.appendChild(body);
-
-  if (c.pid){
-    const parent = state.all.get(c.pid);
-    if (parent){
-      const rline = document.createElement('div'); rline.className='replying-to';
-      rline.textContent = `↳ in reply to ${parent.nick || 'Anonymous'}`;
-      bubble.appendChild(rline);
-    }
-  }
-
-  bubble.appendChild(content);
-
-  const actions = document.createElement('div'); actions.className='actions';
+  ensureLikeButton(actions, c);
 
   const rootLocked = !!(c.rid ? (state.all.get(c.rid)?.locked) : c.locked);
   const canReply = isAdmin ? true : (allowReplies && !rootLocked);
@@ -753,22 +871,17 @@ function renderOne(c){
       actions.appendChild(up); actions.appendChild(dn);
     }
 
+  }
+
+  if (isAdmin) {
     const del = document.createElement('span'); del.className='action'; del.textContent='Delete';
     del.addEventListener('click', async()=>{
-      if (c.top){ if (!armConfirmButton(del, 'Are you sure?')) return; }
+      if (!c.rid && c.top){ if (!armConfirmButton(del, 'Are you sure?')) return; }
       try{ await api({ event:'COMMENT_DELETE_FOR_ADMIN', id:c.id, url:PAGE_URL_PATH }); await loadLatest(true); }
       catch(e){ setStatus(e?.message||'Failed to delete', true); }
     });
     actions.appendChild(del);
   }
-
-  bubble.appendChild(actions);
-  msg.appendChild(bubble);
-
-  const repliesWrap = document.createElement('div');
-  repliesWrap.className = 'replies';
-  if (expanded.has(c.id)) repliesWrap.style.display = 'flex';
-  bubble.appendChild(repliesWrap);
 
   if (!c.rid) {
     const rootId = c.id;
@@ -786,10 +899,10 @@ function renderOne(c){
       btnToggle.addEventListener('click', () => {
         if (expanded.has(rootId)) {
           expanded.delete(rootId);
-          setRepliesVisibility(repliesWrap, false);
+          if (repliesWrap) setRepliesVisibility(repliesWrap, false);
         } else {
           expanded.add(rootId);
-          setRepliesVisibility(repliesWrap, true);
+          if (repliesWrap) setRepliesVisibility(repliesWrap, true);
         }
         setLabel();
       });
@@ -797,9 +910,193 @@ function renderOne(c){
     }
   }
 
-  maybeAnimateMessage(c, body);
+  return actions;
+}
 
-  // Mark as seen on this client so subsequent refreshes don’t retrigger non-pinned animations
+
+function renderOne(c){
+  const msg = document.createElement('div'); msg.className = 'msg'; msg.dataset.id = c.id;
+  if (c.top) {
+    const badge = document.createElement('span');
+    badge.className = 'pin-badge';
+    badge.textContent = 'PINNED';
+    msg.appendChild(badge);
+  }
+
+  const av = document.createElement('div'); av.className = 'avatar';
+  if (authorIsAdmin(c)) { av.classList.add('admin'); av.textContent='</>'; }
+  else { av.textContent = initialOf(c.nick); }
+  msg.appendChild(av);
+
+  const bubble = document.createElement('div'); bubble.className='bubble';
+  const meta = document.createElement('div'); meta.className='meta';
+  const nick = document.createElement('span'); nick.className='nick'; nick.dataset.role='nick'; nick.textContent = c.nick || 'Anonymous';
+  if (authorIsAdmin(c)) nick.classList.add('admin-glow');
+
+  let locText = '';
+  if (isAdmin) {
+    const parts = [];
+    if (c.city) parts.push(c.city);
+    if (c.region) parts.push(c.region);
+    if (c.country) parts.push(c.country);
+    locText = parts.join(', ');
+  }
+
+  const time = document.createElement('span');
+  time.dataset.role='time';
+  time.textContent = new Date(c.created || Date.now()).toLocaleString();
+
+  meta.appendChild(nick);
+  if (isAdmin && locText) {
+    const locSpan = document.createElement('span');
+    locSpan.className = 'loc';
+    locSpan.dataset.role='location';
+    locSpan.textContent = '· ' + locText;
+    meta.appendChild(locSpan);
+  }
+  meta.appendChild(time);
+  bubble.appendChild(meta);
+
+  const content = document.createElement('div'); content.className='content';
+  const body = renderSafeContent(c.content, { allowLinks:true, allowEmbeds: authorIsAdmin(c) });
+  content.appendChild(body);
+
+  if (c.pid){
+    const parent = state.all.get(c.pid);
+    if (parent){
+      const rline = document.createElement('div'); rline.className='replying-to';
+      rline.textContent = `↳ in reply to ${parent.nick || 'Anonymous'}`;
+      bubble.appendChild(rline);
+    }
+  }
+
+  bubble.appendChild(content);
+
+  const repliesWrap = document.createElement('div');
+  repliesWrap.className = 'replies';
+  repliesWrap.dataset.role='replies';
+  if (expanded.has(c.id)) repliesWrap.style.display = 'flex';
+
+  const actions = buildActions(c, repliesWrap);
+  bubble.appendChild(actions);
+  bubble.appendChild(repliesWrap);
+  msg.appendChild(bubble);
+
+  maybeAnimateMessage(c, content);
+  seenIds.add(String(c.id));
+
+  return { el: msg, repliesWrap };
+}
+
+function updateMessageElement(msg, c){
+  msg.dataset.id = c.id;
+
+  let msgBadge = msg.querySelector(':scope > .pin-badge');
+  if (c.top) {
+    if (!msgBadge) {
+      msgBadge = document.createElement('span');
+      msgBadge.className = 'pin-badge';
+      msg.insertBefore(msgBadge, msg.firstChild || null);
+    }
+    msgBadge.textContent = 'PINNED';
+  } else if (msgBadge) {
+    msgBadge.remove();
+  }
+
+  let av = msg.querySelector(':scope > .avatar');
+  if (!av) {
+    av = document.createElement('div');
+    av.className = 'avatar';
+    msg.insertBefore(av, msg.firstChild || null);
+  }
+  av.classList.toggle('admin', authorIsAdmin(c));
+  av.textContent = authorIsAdmin(c) ? '</>' : initialOf(c.nick);
+
+  let bubble = msg.querySelector(':scope > .bubble');
+  if (!bubble) {
+    bubble = document.createElement('div'); bubble.className = 'bubble';
+    msg.appendChild(bubble);
+  }
+
+  let meta = bubble.querySelector('.meta');
+  if (!meta) {
+    meta = document.createElement('div'); meta.className = 'meta';
+    bubble.insertBefore(meta, bubble.firstChild || null);
+  }
+
+  let nick = meta.querySelector('[data-role="nick"]');
+  if (!nick) {
+    nick = document.createElement('span'); nick.className = 'nick'; nick.dataset.role='nick';
+    meta.insertBefore(nick, meta.firstChild || null);
+  }
+  nick.textContent = c.nick || 'Anonymous';
+  nick.classList.toggle('admin-glow', authorIsAdmin(c));
+
+  let locSpan = meta.querySelector('[data-role="location"]');
+  let locText = '';
+  if (isAdmin) {
+    const parts = [];
+    if (c.city) parts.push(c.city);
+    if (c.region) parts.push(c.region);
+    if (c.country) parts.push(c.country);
+    locText = parts.join(', ');
+  }
+  if (isAdmin && locText) {
+    if (!locSpan) {
+      locSpan = document.createElement('span');
+      locSpan.className = 'loc';
+      locSpan.dataset.role='location';
+      meta.insertBefore(locSpan, meta.querySelector('[data-role="time"]'));
+    }
+    locSpan.textContent = '· ' + locText;
+  } else if (locSpan) {
+    locSpan.remove();
+  }
+
+  let timeSpan = meta.querySelector('[data-role="time"]');
+  if (!timeSpan) {
+    timeSpan = document.createElement('span'); timeSpan.dataset.role='time';
+    meta.appendChild(timeSpan);
+  }
+  timeSpan.textContent = new Date(c.created || Date.now()).toLocaleString();
+
+  let content = bubble.querySelector('.content');
+  if (!content) {
+    content = document.createElement('div'); content.className='content';
+    bubble.appendChild(content);
+  }
+
+  if (c.pid) {
+    let rline = bubble.querySelector('.replying-to');
+    const parent = state.all.get(c.pid);
+    const txt = parent ? `↳ in reply to ${parent.nick || 'Anonymous'}` : '';
+    if (txt) {
+      if (!rline) {
+        rline = document.createElement('div'); rline.className='replying-to';
+        bubble.insertBefore(rline, content);
+      }
+      rline.textContent = txt;
+    } else if (rline) {
+      rline.remove();
+    }
+  } else {
+    const rline = bubble.querySelector('.replying-to');
+    if (rline) rline.remove();
+  }
+
+  let repliesWrap = bubble.querySelector('.replies');
+  if (!repliesWrap) {
+    repliesWrap = document.createElement('div'); repliesWrap.className='replies'; repliesWrap.dataset.role='replies';
+    bubble.appendChild(repliesWrap);
+  }
+  repliesWrap.style.display = expanded.has(c.id) ? 'flex' : 'none';
+
+  const oldActions = bubble.querySelector('.actions');
+  if (oldActions) oldActions.remove();
+  const newActions = buildActions(c, repliesWrap);
+  bubble.insertBefore(newActions, repliesWrap);
+
+  maybeAnimateMessage(c, content);
   seenIds.add(String(c.id));
 
   return { el: msg, repliesWrap };
@@ -825,40 +1122,77 @@ function clearMessages(){
 
 function renderAllIncremental(){
   if (!messagesEl) return;
-  clearMessages();
 
-  for (const r of state.roots){
-    const childCount = (state.childrenByRoot.get(r.id)||[]).length;
-    prevChildCounts.set(r.id, childCount);
-  }
-  seededChildCounts = true;
+  const existing = new Map();
+  messagesEl.querySelectorAll('.msg').forEach(el => {
+    if (el.dataset && el.dataset.id) existing.set(el.dataset.id, el);
+  });
 
-  for (const root of state.roots){
-    const { el, repliesWrap } = renderOne(root, 0);
-    messagesEl.appendChild(el);
+  const placeNode = (container, node, index) => {
+    const ref = container.children[index] || null;
+    if (ref === node) return;
+    container.insertBefore(node, ref);
+  };
 
-    const children = state.childrenByRoot.get(root.id) || [];
-    const kidsOf = new Map(); children.forEach(ch => { const p = ch.pid || root.id; if (!kidsOf.has(p)) kidsOf.set(p, []); kidsOf.get(p).push(ch); });
-    const renderSub = (parentId, container) => {
-      const arr = kidsOf.get(parentId) || [];
-      for (const ch of arr){
-        const { el: childEl, repliesWrap: childWrap } = renderOne(ch, 1);
-        container.appendChild(childEl);
-        renderSub(ch.id, childWrap);
-      }
-    };
-    renderSub(root.id, repliesWrap);
+  const ensureMessage = (comment, depth = 0) => {
+    const idStr = String(comment.id);
+    const existingEl = existing.get(idStr);
+    let result;
+    if (existingEl) {
+      result = updateMessageElement(existingEl, comment);
+      existing.delete(idStr);
+    } else {
+      result = renderOne(comment);
+    }
+    const { el, repliesWrap } = result;
+    el.dataset.depth = String(depth);
+    return { el, repliesWrap };
+  };
 
-    if (expanded.has(root.id)) setRepliesVisibility(repliesWrap, true);
-    else setRepliesVisibility(repliesWrap, false);
+  const renderChildren = (parentId, container, depth) => {
+    if (!container) return;
+    const children = state.childrenByRoot.get(parentId) || [];
+    const keepIds = new Set(children.map(ch => String(ch.id)));
 
-    el.addEventListener('click', (evt)=>{
-      if (evt.target && evt.target.classList.contains('action') && evt.target.textContent === 'Reply') {
-        expanded.add(root.id);
-        setRepliesVisibility(repliesWrap, true);
+    children.forEach((child, idx) => {
+      const { el: childEl, repliesWrap: childWrap } = ensureMessage(child, depth + 1);
+      placeNode(container, childEl, idx);
+      renderChildren(child.id, childWrap, depth + 1);
+    });
+
+    Array.from(container.querySelectorAll(':scope > .msg')).forEach(childEl => {
+      if (!keepIds.has(childEl.dataset.id)) {
+        existing.delete(childEl.dataset.id);
+        childEl.remove();
       }
     });
-  }
+
+    if (expanded.has(parentId)) setRepliesVisibility(container, true);
+    else setRepliesVisibility(container, false);
+  };
+
+  state.roots.forEach((root, idx) => {
+    const { el, repliesWrap } = ensureMessage(root, 0);
+    placeNode(messagesEl, el, idx);
+    const childCount = (state.childrenByRoot.get(root.id) || []).length;
+    prevChildCounts.set(root.id, childCount);
+    renderChildren(root.id, repliesWrap, 0);
+    if (expanded.has(root.id)) setRepliesVisibility(repliesWrap, true);
+    else setRepliesVisibility(repliesWrap, false);
+  });
+  seededChildCounts = true;
+
+  const rootIds = new Set(state.roots.map(r => String(r.id)));
+  Array.from(messagesEl.querySelectorAll(':scope > .msg')).forEach(el => {
+    if (!rootIds.has(el.dataset.id)) {
+      existing.delete(el.dataset.id);
+      el.remove();
+    }
+  });
+
+  existing.forEach(el => {
+    if (el.parentNode) el.parentNode.removeChild(el);
+  });
 }
 
 /* ===== Loading ===== */
@@ -879,6 +1213,13 @@ async function loadLatest(allPages = false){
     }
 
     buildThread({ comments: Array.from(acc.values()) });
+    if (!firstLoadDone) {
+      for (const root of state.roots) {
+        if (root.top && authorIsAdmin(root)) {
+          mustAnimate.add(String(root.id));
+        }
+      }
+    }
     renderAllIncremental();
     firstLoadDone = true;
     updateAdminUI();
@@ -941,6 +1282,10 @@ btnSend && btnSend.addEventListener('click', async()=>{
 
     const res = await api(payload);
     if (res && res.code === 0) {
+      if (isAdmin && !replyTarget && sendNoReplyEl && sendNoReplyEl.checked) {
+        try { await api({ event:'COMMENT_TOGGLE_LOCK_FOR_ADMIN', id: res.data.id, url: PAGE_URL_PATH, lock: true }); }
+        catch {}
+      }
       if (isAdmin && !replyTarget && sendAutoPinEl && sendAutoPinEl.checked) {
         try { await api({ event:'COMMENT_SET_FOR_ADMIN', id: res.data.id, url: PAGE_URL_PATH, set:{ top:true } }); } catch {}
       }
