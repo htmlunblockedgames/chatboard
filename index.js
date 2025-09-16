@@ -341,9 +341,33 @@ const onlineUsersEl=$("onlineUsers"), onlineTabsEl=$("onlineTabs");
 const ADMIN_PARAM = new URLSearchParams(window.location.search).get("admin");
 const host = window.location.hostname;
 const pathRaw = window.location.pathname || "";
-const normalizedPath = pathRaw.replace(/\/+$/, '/') || '/';
-const isProdRoute = host === "htmlunblockedgames.github.io" && normalizedPath === "/chatboard/";
-const isPolyEmbed = host === "sites.google.com" && (normalizedPath === "/view/poly-track/" || normalizedPath.startsWith("/view/poly-track/"));
+const pathNormalized = (() => {
+  const raw = String(pathRaw || '/');
+  const withoutTrailing = raw.replace(/\/+$/, '');
+  return withoutTrailing || '/';
+})();
+const pathWithSlash = pathNormalized === '/' ? '/' : `${pathNormalized}/`;
+const normalizeTargetPath = (target) => {
+  const base = String(target || '/').replace(/\/+$/, '');
+  return base || '/';
+};
+const matchesPath = (target) => {
+  const normalizedTarget = normalizeTargetPath(target);
+  if (normalizedTarget === '/') return pathNormalized === '/' || pathWithSlash === '/';
+  const targetWithSlash = `${normalizedTarget}/`;
+  return pathNormalized === normalizedTarget || pathWithSlash === targetWithSlash;
+};
+const isProdRoute = host === "htmlunblockedgames.github.io" && (
+  matchesPath('/chatboard') ||
+  matchesPath('/chatboard/') ||
+  matchesPath('/chatboard/index.html')
+);
+const isPolyEmbed = host === "sites.google.com" && (
+  matchesPath('/view/poly-track') ||
+  matchesPath('/view/poly-track/') ||
+  matchesPath('/view/poly-track/index.html') ||
+  pathNormalized.startsWith('/view/poly-track/')
+);
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "0.0.0.0", "::1"]);
 const isLocalHost = LOCAL_HOSTS.has(host);
 const SHOW_ADMIN_PANEL = ADMIN_PARAM === "1" && (isProdRoute || isLocalHost);
