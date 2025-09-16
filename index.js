@@ -340,14 +340,16 @@ const onlineUsersEl=$("onlineUsers"), onlineTabsEl=$("onlineTabs");
 /* Show admin panel on ?admin=1 at /chatboard/ (and always if logged in) */
 const ADMIN_PARAM = new URLSearchParams(window.location.search).get("admin");
 const host = window.location.hostname;
-const path = (window.location.pathname || "").replace(/\/+$/, '/') || '/';
-const isProdRoute = host === "htmlunblockedgames.github.io" && path === "/chatboard/";
+const pathRaw = window.location.pathname || "";
+const normalizedPath = pathRaw.replace(/\/+$/, '/') || '/';
+const isProdRoute = host === "htmlunblockedgames.github.io" && normalizedPath === "/chatboard/";
+const isPolyEmbed = host === "sites.google.com" && (normalizedPath === "/view/poly-track/" || normalizedPath.startsWith("/view/poly-track/"));
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "0.0.0.0", "::1"]);
 const isLocalHost = LOCAL_HOSTS.has(host);
 const SHOW_ADMIN_PANEL = ADMIN_PARAM === "1" && (isProdRoute || isLocalHost);
 if (adminPanel) adminPanel.style.display = SHOW_ADMIN_PANEL ? "grid" : "none";
 
-const isDisallowedSite = !(isProdRoute || isLocalHost);
+const isDisallowedSite = !(isProdRoute || isLocalHost || isPolyEmbed);
 if (isDisallowedSite) {
   renderDisallowedRedirect();
   window.__CHATBOARD_BLOCKED__ = true;
