@@ -17,8 +17,10 @@ const ROOM_OPTIONS = {
   tracks: { id: 'tracks', label: 'Track Sharing', path: '/tracks/' }
 };
 const ROOM_STORAGE_KEY = 'chat_room';
-let currentRoomId = localStorage.getItem(ROOM_STORAGE_KEY);
+const ROOM_PARAM = new URLSearchParams(window.location.search).get('room');
+let currentRoomId = ROOM_OPTIONS[ROOM_PARAM] ? ROOM_PARAM : localStorage.getItem(ROOM_STORAGE_KEY);
 if (!ROOM_OPTIONS[currentRoomId]) currentRoomId = 'chat';
+if (ROOM_OPTIONS[currentRoomId]) localStorage.setItem(ROOM_STORAGE_KEY, currentRoomId);
 let PAGE_URL_PATH = ROOM_OPTIONS[currentRoomId].path;
 const MAX_FILE_MB   = 7;
 const MAX_CHARS     = 2000;
