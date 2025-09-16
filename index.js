@@ -18,6 +18,33 @@ const MAX_CHARS     = 2000;
 const ADMIN_NICK    = "Poly Track Administrator";
 const MIN_POLL_OPTIONS = 2;
 const MAX_POLL_OPTIONS = 8;
+const REDIRECT_URL  = "https://sites.google.com/view/poly-track/chatboard";
+
+function renderDisallowedRedirect(){
+  if (!document || !document.body) return;
+  const body = document.body;
+  body.innerHTML = "";
+  body.style.margin = "0";
+  body.style.minHeight = "100vh";
+  body.style.display = "flex";
+  body.style.alignItems = "center";
+  body.style.justifyContent = "center";
+  body.style.background = "#fafafa";
+  body.style.fontFamily = 'Inter, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif';
+  const link = document.createElement('a');
+  link.href = REDIRECT_URL;
+  link.rel = 'noopener noreferrer';
+  link.textContent = 'Open Poly Track Chatboard';
+  link.style.fontSize = '16px';
+  link.style.fontWeight = '700';
+  link.style.color = '#0f3c55';
+  link.style.textDecoration = 'none';
+  link.style.padding = '12px 18px';
+  link.style.borderRadius = '12px';
+  link.style.border = '1px solid #c5d9ef';
+  link.style.background = '#eaf5fc';
+  body.appendChild(link);
+}
 
 /* ===== Pagination config ===== */
 const PAGE_SIZE = 10;
@@ -116,6 +143,7 @@ function updatePresenceUI(users, tabs){
 /* Debounced refresh utility to prevent overlapping loads */
 let __refreshTimer = null, __refreshInFlight = false, __refreshQueued = false;
 async function runRefresh() {
+  if (isDisallowedSite) return;
   if (__refreshInFlight) { __refreshQueued = true; return; }
   __refreshInFlight = true;
   try { await refreshAdminStatus(); } catch {}
@@ -128,11 +156,13 @@ async function runRefresh() {
   }
 }
 function queueRefresh(delay = 120){
+  if (isDisallowedSite) return;
   if (__refreshTimer) clearTimeout(__refreshTimer);
   __refreshTimer = setTimeout(runRefresh, delay);
 }
 
 function connectWS(){
+  if (isDisallowedSite) return;
   try{
     ws = new WebSocket(WS_ENDPOINT);
     ws.onopen = () => {
@@ -285,8 +315,14 @@ const isLocalHost = LOCAL_HOSTS.has(host);
 const SHOW_ADMIN_PANEL = ADMIN_PARAM === "1" && (isProdRoute || isLocalHost);
 if (adminPanel) adminPanel.style.display = SHOW_ADMIN_PANEL ? "grid" : "none";
 
+const isDisallowedSite = !(isProdRoute || isLocalHost);
+if (isDisallowedSite) {
+  renderDisallowedRedirect();
+  window.__CHATBOARD_BLOCKED__ = true;
+}
+
 /* Ensure WS starts once */
-if (!window.__wsStarted) { window.__wsStarted = true; try { connectWS(); } catch {} }
+if (!isDisallowedSite && !window.__wsStarted) { window.__wsStarted = true; try { connectWS(); } catch {} }
 /* >>> Added: leave on unload (bind once) */
 if (!window.__presenceBound){
   window.__presenceBound = true;
@@ -565,6 +601,9 @@ function armConfirmButton(btn, label = 'Are you sure?', ms = 3000){
 
 /* ===== API ===== */
 async function api(eventObj){
+  if (isDisallowedSite) {
+    return { code: 403, message: 'This chatboard is only available at the official site.', redirect: REDIRECT_URL };
+  }
   const body = { ...eventObj };
   if (body.url == null) body.url = PAGE_URL_PATH;
   if (TK_TOKEN) { body.accessToken = TK_TOKEN; body.token = TK_TOKEN; }
@@ -1447,6 +1486,7 @@ function renderAllIncremental(){
 
 /* ===== Loading ===== */
 async function loadLatest(allPages = false){
+  if (isDisallowedSite) return;
   if (loading) return;
   loading = true;
   try{
