@@ -13,6 +13,13 @@ try { ACTUAL_PARENT = document.referrer || ''; }
 catch { ACTUAL_PARENT = ''; }
 
 /* ===== Constants ===== */
+// --- WS feature flag and reconnect caps ---
+const WS_ENABLED = false; // flip to true ONLY when a real /ws endpoint exists
+let wsFails = 0;
+const WS_MAX_FAILS = 6; // stop after 6 failures
+let lastRefresh = 0;     // throttle window
+const REFRESH_MIN_MS = 4000;
+
 const WORKER_URL    = "https://twikoo-cloudflare.ertertertet07.workers.dev";
 const PAGE_HREF     = "https://htmlunblockedgames.github.io/chatboard/";
 const ROOM_OPTIONS = {
@@ -57,7 +64,8 @@ const __ancestor = (document.location && document.location.ancestorOrigins && do
   ? document.location.ancestorOrigins[0] : "";
 
 function buildWsEndpoint(){
-  return WORKER_URL.replace(/^http/i, 'ws').replace(/\/$/, '') +
+  const base = WORKER_URL; // keep API worker as base unless you later supply a true WS URL
+  return base.replace(/^http/i, 'ws').replace(/\/$/, '') +
     '/ws?room=' + encodeURIComponent(PAGE_URL_PATH) +
     '&parent=' + encodeURIComponent(__parentRef) +
     '&ancestor=' + encodeURIComponent(__ancestor) +
@@ -130,85 +138,77 @@ function updatePresenceUI(users, tabs){
 let __refreshTimer = null, __refreshInFlight = false, __refreshQueued = false;
 async function runRefresh() {
   if (__refreshInFlight) { __refreshQueued = true; return; }
+  if (document.hidden) return;
+  const now = Date.now();
+  if (now - lastRefresh < REFRESH_MIN_MS) { __refreshQueued = true; return; }
   __refreshInFlight = true;
-  try { await refreshAdminStatus(); } catch {}
+  lastRefresh = now;
   try {
+    if ((SHOW_ADMIN_PANEL || isAdmin) && adminPanel && adminPanel.style.display !== 'none') {
+      try { await refreshAdminStatus(); } catch {}
+    }
     await loadLatest(true);
-  } catch {}
-  finally {
+  } finally {
     __refreshInFlight = false;
-    if (__refreshQueued) { __refreshQueued = false; runRefresh(); }
+    if (__refreshQueued) { __refreshQueued = false; queueRefresh(REFRESH_MIN_MS); }
   }
 }
-function queueRefresh(delay = 120){
+function queueRefresh(delay = 200){
   if (__refreshTimer) clearTimeout(__refreshTimer);
   __refreshTimer = setTimeout(runRefresh, delay);
 }
 
 function connectWS(){
+  if (!WS_ENABLED) return; // short-circuit when WS is not implemented
   try{
     const endpoint = buildWsEndpoint();
     ws = new WebSocket(endpoint);
     ws.onopen = () => {
+      wsFails = 0;
       wsBackoff = 500;
       if (connEl){ connEl.textContent = "Live: Connected"; connEl.classList.add("ok"); connEl.classList.remove("bad"); }
+      clearInterval(wsPing);
       wsPing = setInterval(() => { try { ws.send("ping"); } catch {} }, 30000);
-      /* >>> Added: send join on open */
       try { ws.send(JSON.stringify({ type:'join', vid: VID })); } catch {}
-      /* <<< Added */
-      queueRefresh(50);
+      queueRefresh(120); // do not spam; first refresh soon after connect
     };
     ws.onmessage = (e) => {
       if (typeof e.data !== 'string') return;
       if (e.data === 'pong') return;
-      try {
-        const msg = JSON.parse(e.data);
-        /* >>> Added: presence/hello handling */
-        if (msg && (msg.type === 'hello' || msg.type === 'presence')) {
-          updatePresenceUI(msg.users|0, msg.tabs|0);
-          return;
-        }
-        if (msg && msg.type === 'like' && msg.id) {
-          updateCommentLikes(String(msg.id), msg.likes);
-          return;
-        }
-        if (msg && msg.type === 'poll-vote' && msg.id) {
-          applyPollCounts(String(msg.id), msg.counts, msg.totalVotes);
-          return;
-        }
-        /* <<< Added */
-        if (msg && msg.type === 'new-reply') {
-          if (msg.id) { mustAnimate.add(String(msg.id)); }
-          if (msg.rootId) {
-            const rid = String(msg.rootId);
-            expanded.add(rid);
-            const rootMsg = messagesEl && messagesEl.querySelector(`.msg[data-id="${rid}"]`);
-            if (rootMsg) {
-              const wrap = rootMsg.querySelector(':scope > .bubble > .replies');
-              if (wrap) setRepliesVisibility(wrap, true);
-            }
-          }
-          queueRefresh(100);
-        } else if (msg && msg.type === 'new-root') {
-          if (msg.id) { mustAnimate.add(String(msg.id)); }
-          queueRefresh(120);
-        } else {
-          queueRefresh(150); // refresh / unknown -> coalesced refresh
-        }
-      } catch {
-        queueRefresh(150);
+      let msg;
+      try { msg = JSON.parse(e.data); } catch { return; } // ignore non-JSON
+      // Presence and passive updates do NOT trigger fetches
+      if (msg.type === 'hello' || msg.type === 'presence') {
+        updatePresenceUI(msg.users|0, msg.tabs|0);
+        return;
       }
+      if (msg.type === 'like' && msg.id) {
+        updateCommentLikes(String(msg.id), msg.likes);
+        return;
+      }
+      if (msg.type === 'poll-vote' && msg.id) {
+        applyPollCounts(String(msg.id), msg.counts, msg.totalVotes);
+        return;
+      }
+      // Only fetch on new content events
+      if (msg.type === 'new-reply' || msg.type === 'new-root') {
+        if (msg.id) { mustAnimate.add(String(msg.id)); }
+        queueRefresh(200);
+      }
+      // Ignore all other message types
     };
     ws.onclose = ws.onerror = () => {
       if (connEl){ connEl.textContent = "Live: Reconnecting…"; connEl.classList.remove("ok"); connEl.classList.add("bad"); }
       clearInterval(wsPing);
-      setTimeout(connectWS, Math.min(wsBackoff, 8000));
-      wsBackoff = Math.min(wsBackoff * 2, 8000);
+      if (++wsFails >= WS_MAX_FAILS) { return; } // stop retrying
+      wsBackoff = Math.min((wsBackoff || 500) * 2, 30000);
+      setTimeout(connectWS, wsBackoff);
     };
   }catch{
     if (connEl){ connEl.textContent = "Live: Reconnecting…"; connEl.classList.remove("ok"); connEl.classList.add("bad"); }
-    setTimeout(connectWS, Math.min(wsBackoff, 8000));
-    wsBackoff = Math.min(wsBackoff * 2, 8000);
+    if (++wsFails >= WS_MAX_FAILS) { return; }
+    wsBackoff = Math.min((wsBackoff || 500) * 2, 30000);
+    setTimeout(connectWS, wsBackoff);
   }
 }
 
@@ -292,7 +292,7 @@ function switchRoom(roomId){
   PAGE_URL_PATH = ROOM_OPTIONS[currentRoomId].path;
   updateRoomButtonUI();
   resetRoomState();
-  wsBackoff = 500;
+  wsFails = 0; wsBackoff = 500;
   closeWS();
   connectWS();
   runRefresh().catch(()=>{});
@@ -391,7 +391,21 @@ const SHOW_ADMIN_PANEL = ADMIN_PARAM === "1" && (isProdRoute || isLocalHost);
 if (adminPanel) adminPanel.style.display = SHOW_ADMIN_PANEL ? "grid" : "none";
 
 /* Ensure WS starts once */
-if (!window.__wsStarted) { window.__wsStarted = true; try { connectWS(); } catch {} }
+if (!window.__wsStarted) {
+  window.__wsStarted = true;
+  if (WS_ENABLED) { try { connectWS(); } catch {} }
+}
+
+// Kick a first fetch when the page loads and WS is off
+if (!window.__bootFetched) {
+  window.__bootFetched = true;
+  if (document.readyState === 'loading') {
+    window.addEventListener('DOMContentLoaded', () => queueRefresh(60), { once: true });
+  } else {
+    queueRefresh(60);
+  }
+}
+
 /* >>> Added: leave on unload (bind once) */
 if (!window.__presenceBound){
   window.__presenceBound = true;
@@ -400,6 +414,37 @@ if (!window.__presenceBound){
   });
 }
 /* <<< Added */
+
+if (!window.__visBound){
+  window.__visBound = true;
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) queueRefresh(120);
+  });
+}
+
+// Soft-live polling when WS is disabled
+if (!window.__softLiveBound) {
+  window.__softLiveBound = true;
+  let __pollTimer = null;
+
+  const startPoll = () => {
+    if (document.hidden || WS_ENABLED) return;
+    if (__pollTimer) clearInterval(__pollTimer);
+    // 20–25s cadence with jitter; runRefresh()/REFRESH_MIN_MS throttles real work
+    __pollTimer = setInterval(() => queueRefresh(500), 20000 + Math.floor(Math.random() * 5000));
+  };
+
+  const stopPoll = () => {
+    if (__pollTimer) { clearInterval(__pollTimer); __pollTimer = null; }
+  };
+
+  document.addEventListener('visibilitychange', () => document.hidden ? stopPoll() : startPoll());
+  window.addEventListener('focus', startPoll);
+  window.addEventListener('blur', stopPoll);
+  window.addEventListener('online', () => queueRefresh(200));
+
+  if (!document.hidden) startPoll();
+}
 
 /* ===== State ===== */
 let TK_TOKEN = localStorage.getItem('twikoo_access_token') || null;
@@ -1713,5 +1758,9 @@ btnSend && btnSend.addEventListener('click', async()=>{
 /* ===== Presence badge (optional mini indicator) ===== */
 (function attachConnBadge(){
   if (!connEl) return;
-  connEl.textContent = ws && ws.readyState===1 ? "Live: Connected" : "Live: Connecting…";
+  connEl.textContent = WS_ENABLED
+    ? (ws && ws.readyState === 1 ? "Live: Connected" : "Live: Connecting…") 
+    : "Live: Auto-refresh";
+  connEl.classList.toggle('ok', !WS_ENABLED || (ws && ws.readyState === 1));
+  connEl.classList.toggle('bad', WS_ENABLED && (!ws || ws.readyState !== 1));
 })();
