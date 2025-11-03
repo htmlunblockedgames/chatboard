@@ -227,6 +227,11 @@ const adminPanel=$("adminPanel"), adminPass=$("adminPass"), btnAdminLogin=$("btn
 const statTotalEl=$("statTotal"), statRepliesEl=$("statReplies"), statTodayEl=$("statToday");
 const toggleRepliesEl=$("toggleReplies");
 const togglePostsEl=$("togglePosts");
+const cleanupPanel=$("cleanupPanel"), cleanupKeyword=$("cleanupKeyword"),
+      cleanupStart=$("cleanupStart"), cleanupEnd=$("cleanupEnd"),
+      cleanupSelectAll=$("cleanupSelectAll"), btnCleanupPreview=$("btnCleanupPreview"),
+      btnCleanupDelete=$("btnCleanupDelete"), cleanupStatusEl=$("cleanupStatus"),
+      cleanupResultsEl=$("cleanupResults");
 const optNoReplyEl=$("optNoReply"), sendNoReplyEl=$("sendNoReply"),
       optAutoPinEl=$("optAutoPin"), sendAutoPinEl=$("sendAutoPin");
 const btnCreatePoll=$("btnCreatePoll"), pollBuilder=$("pollBuilder"), pollQuestion=$("pollQuestion"),
@@ -451,6 +456,12 @@ let TK_TOKEN = localStorage.getItem('twikoo_access_token') || null;
 const state = { all:new Map(), roots:[], childrenByRoot:new Map(), parentOf:new Map() };
 let serverCounts = null;
 let loading=false;
+let cleanupMatches = [];
+const cleanupSelected = new Set();
+let cleanupLoading = false;
+let cleanupLastTerm = '';
+const CLEANUP_LIMIT = 200;
+const CLEANUP_CONTEXT = 80;
 let replyTarget=null;
 const expanded = new Set();
 const prevChildCounts = new Map();
@@ -713,6 +724,286 @@ function armConfirmButton(btn, label = 'Are you sure?', ms = 3000){
   return false;
 }
 
+/* ===== Admin keyword cleanup ===== */
+function escapeHtml(str){
+  return String(str ?? '').replace(/[&<>"']/g, ch => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[ch] || ch));
+}
+function escapeRegExp(str){
+  return String(str ?? '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+function cleanupText(content){
+  if (!content) return '';
+  const tmp = document.createElement('div');
+  tmp.innerHTML = String(content);
+  return (tmp.textContent || tmp.innerText || '').trim();
+}
+function parseDateInput(value){
+  if (!value) return null;
+  const ms = new Date(value).getTime();
+  return Number.isFinite(ms) ? ms : null;
+}
+function buildCleanupSnippet(comment, term){
+  const raw = cleanupText(comment?.content || '');
+  if (!raw) return '<em>Media-only message</em>';
+  const lower = raw.toLowerCase();
+  const needle = term.toLowerCase();
+  let start = 0;
+  let end = Math.min(raw.length, CLEANUP_CONTEXT * 2 + needle.length);
+  const idx = needle ? lower.indexOf(needle) : -1;
+  if (idx >= 0){
+    start = Math.max(0, idx - CLEANUP_CONTEXT);
+    end = Math.min(raw.length, idx + needle.length + CLEANUP_CONTEXT);
+  }
+  let snippet = raw.slice(start, end).trim();
+  if (start > 0) snippet = '…' + snippet;
+  if (end < raw.length) snippet = snippet + '…';
+  const safe = escapeHtml(snippet);
+  if (!needle) return safe;
+  try{
+    const re = new RegExp(escapeRegExp(term), 'ig');
+    return safe.replace(re, m => `<mark>${m}</mark>`);
+  }catch{
+    return safe;
+  }
+}
+function setCleanupStatus(message, isError = false){
+  if (!cleanupStatusEl) return;
+  cleanupStatusEl.textContent = message || '';
+  cleanupStatusEl.classList.toggle('error', !!isError);
+}
+function updateCleanupButtons(){
+  if (btnCleanupDelete){
+    btnCleanupDelete.disabled = cleanupLoading || cleanupSelected.size === 0;
+  }
+  if (cleanupSelectAll){
+    if (cleanupLoading || !cleanupMatches.length){
+      cleanupSelectAll.disabled = true;
+      cleanupSelectAll.checked = false;
+    } else {
+      cleanupSelectAll.disabled = false;
+      cleanupSelectAll.checked = cleanupSelected.size === cleanupMatches.length;
+    }
+  }
+}
+function setCleanupLoading(flag){
+  cleanupLoading = !!flag;
+  if (cleanupKeyword) cleanupKeyword.disabled = cleanupLoading;
+  if (cleanupStart) cleanupStart.disabled = cleanupLoading;
+  if (cleanupEnd) cleanupEnd.disabled = cleanupLoading;
+  if (btnCleanupPreview) btnCleanupPreview.disabled = cleanupLoading;
+  updateCleanupButtons();
+}
+function toggleCleanupSelection(id, checked){
+  if (!id) return;
+  if (checked) cleanupSelected.add(id);
+  else cleanupSelected.delete(id);
+  updateCleanupButtons();
+}
+function renderCleanupResults(){
+  if (!cleanupResultsEl) return;
+  if (!cleanupMatches.length){
+    cleanupResultsEl.classList.add('empty');
+    cleanupResultsEl.textContent = 'No matches loaded.';
+    updateCleanupButtons();
+    return;
+  }
+  cleanupResultsEl.classList.remove('empty');
+  cleanupResultsEl.innerHTML = '';
+  cleanupMatches.forEach(comment => {
+    const idStr = String(comment.id);
+    const row = document.createElement('div');
+    row.className = 'cleanup-row';
+    row.dataset.id = idStr;
+
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = cleanupSelected.has(idStr);
+    checkbox.addEventListener('change', evt => {
+      evt.stopPropagation();
+      toggleCleanupSelection(idStr, checkbox.checked);
+    });
+    row.appendChild(checkbox);
+
+    const body = document.createElement('div');
+    body.className = 'cleanup-body';
+
+    const snippetEl = document.createElement('div');
+    snippetEl.className = 'cleanup-snippet';
+    snippetEl.innerHTML = buildCleanupSnippet(comment, cleanupLastTerm);
+    body.appendChild(snippetEl);
+
+    const meta = document.createElement('div');
+    meta.className = 'cleanup-meta';
+    const nickSpan = document.createElement('span');
+    nickSpan.textContent = comment.nick ? `By ${comment.nick}` : 'Anonymous';
+    const timeSpan = document.createElement('span');
+    const createdMs = Number(comment.created || comment.time || 0);
+    timeSpan.textContent = new Date(Number.isFinite(createdMs) && createdMs ? createdMs : Date.now()).toLocaleString();
+    const idSpan = document.createElement('span');
+    idSpan.textContent = `ID ${comment.id}`;
+    meta.appendChild(nickSpan);
+    meta.appendChild(timeSpan);
+    meta.appendChild(idSpan);
+    if (comment.rid){
+      const replySpan = document.createElement('span');
+      replySpan.textContent = `Reply to ${comment.rid}`;
+      meta.appendChild(replySpan);
+    }
+    body.appendChild(meta);
+    row.appendChild(body);
+
+    row.addEventListener('click', evt => {
+      if ((evt.target && evt.target.tagName === 'INPUT') || cleanupLoading) return;
+      const next = !cleanupSelected.has(idStr);
+      const cb = row.querySelector('input[type="checkbox"]');
+      toggleCleanupSelection(idStr, next);
+      if (cb) cb.checked = next;
+    });
+
+    cleanupResultsEl.appendChild(row);
+  });
+  updateCleanupButtons();
+}
+async function fetchAllCommentsForCleanup(){
+  const seen = new Map();
+  const pageSize = 50;
+  let page = 1;
+  let safety = 0;
+  while (true){
+    setCleanupStatus(`Loading page ${page}…`);
+    let res;
+    try{
+      res = await api({ event:'COMMENT_GET', page, pageSize, sort:'newest', likeKey: LIKE_KEY, voteKey: POLL_KEY });
+    }catch(err){
+      throw new Error(err?.message || 'Failed to load comments');
+    }
+    const list = Array.isArray(res?.data?.comments) ? res.data.comments : [];
+    let added = 0;
+    for (const comment of list){
+      const idStr = String(comment.id);
+      if (!seen.has(idStr)){
+        seen.set(idStr, comment);
+        added++;
+      }
+    }
+    if (list.length < pageSize) break;
+    if (added === 0) break;
+    page += 1;
+    safety += 1;
+    if (safety > 200) break;
+  }
+  return Array.from(seen.values());
+}
+async function findCleanupMatches(term, startMs, endMs){
+  const all = await fetchAllCommentsForCleanup();
+  const needle = term.toLowerCase();
+  const matches = [];
+  for (const comment of all){
+    const createdMs = Number(comment.created || comment.time || 0);
+    if (startMs && (!createdMs || createdMs < startMs)) continue;
+    if (endMs && createdMs && createdMs > endMs) continue;
+    const text = cleanupText(comment.content || '');
+    if (!text) continue;
+    if (!text.toLowerCase().includes(needle)) continue;
+    matches.push(comment);
+    if (matches.length >= CLEANUP_LIMIT) break;
+  }
+  matches.sort((a,b)=> Number(b.created || b.time || 0) - Number(a.created || a.time || 0));
+  return matches;
+}
+async function performCleanupSearch(){
+  if (!isAdmin){
+    setCleanupStatus('Login as admin to search.', true);
+    return;
+  }
+  if (cleanupLoading) return;
+  const term = (cleanupKeyword && cleanupKeyword.value ? cleanupKeyword.value.trim() : '');
+  if (!term){
+    setCleanupStatus('Enter a keyword to search.', true);
+    cleanupMatches = [];
+    cleanupSelected.clear();
+    renderCleanupResults();
+    return;
+  }
+  const startMs = parseDateInput(cleanupStart && cleanupStart.value);
+  const endMs = parseDateInput(cleanupEnd && cleanupEnd.value);
+  if (startMs && endMs && startMs > endMs){
+    setCleanupStatus('Start time must be before end time.', true);
+    return;
+  }
+  cleanupMatches = [];
+  cleanupSelected.clear();
+  renderCleanupResults();
+  setCleanupLoading(true);
+  setCleanupStatus('Searching comments…');
+  try{
+    const matches = await findCleanupMatches(term, startMs, endMs);
+    cleanupLastTerm = term;
+    cleanupMatches = matches;
+    cleanupSelected.clear();
+    for (const comment of matches){
+      cleanupSelected.add(String(comment.id));
+    }
+    renderCleanupResults();
+    if (!matches.length){
+      setCleanupStatus(`No matches found for "${term}".`);
+    } else if (matches.length >= CLEANUP_LIMIT){
+      setCleanupStatus(`${matches.length} matches loaded (showing first ${CLEANUP_LIMIT}). Uncheck any you do not want to delete.`);
+    } else {
+      setCleanupStatus(`${matches.length} match${matches.length === 1 ? '' : 'es'} loaded. Uncheck any you do not want to delete.`);
+    }
+  }catch(err){
+    cleanupMatches = [];
+    cleanupSelected.clear();
+    renderCleanupResults();
+    setCleanupStatus(err?.message || 'Search failed', true);
+  }finally{
+    setCleanupLoading(false);
+  }
+}
+async function deleteSelectedCleanupMatches(){
+  if (!isAdmin){
+    setCleanupStatus('Login as admin to delete.', true);
+    return;
+  }
+  if (!cleanupSelected.size){
+    setCleanupStatus('Select at least one message.', true);
+    return;
+  }
+  const ids = Array.from(cleanupSelected);
+  setCleanupLoading(true);
+  setCleanupStatus(`Deleting ${ids.length} message${ids.length === 1 ? '' : 's'}…`);
+  const successIds = [];
+  let failures = 0;
+  let lastError = '';
+  for (const id of ids){
+    try{
+      await api({ event:'COMMENT_DELETE_FOR_ADMIN', id, url: PAGE_URL_PATH });
+      successIds.push(id);
+      cleanupSelected.delete(id);
+    }catch(err){
+      failures += 1;
+      lastError = err?.message || 'Failed to delete';
+    }
+  }
+  if (successIds.length){
+    const successSet = new Set(successIds);
+    cleanupMatches = cleanupMatches.filter(comment => !successSet.has(String(comment.id)));
+  }
+  renderCleanupResults();
+  setCleanupLoading(false);
+  if (failures){
+    setCleanupStatus(`Deleted ${successIds.length} but ${failures} failed. ${lastError}`, true);
+  } else {
+    setCleanupStatus(`Deleted ${successIds.length} message${successIds.length === 1 ? '' : 's'}.`);
+  }
+  if (successIds.length){
+    queueRefresh(400);
+  }
+}
+
 /* ===== API ===== */
 async function api(eventObj){
   const body = { ...eventObj };
@@ -795,6 +1086,23 @@ function updateAdminUI(){
   if (optNoReplyEl){ const show = !!isAdmin && !replyTarget; optNoReplyEl.style.display = show ? 'inline-flex' : 'none'; if (sendNoReplyEl) sendNoReplyEl.disabled = !show || !allowReplies; }
   if (optAutoPinEl){ const show = !!isAdmin && !replyTarget; optAutoPinEl.style.display = show ? 'inline-flex' : 'none'; if (sendAutoPinEl) sendAutoPinEl.disabled = !show; }
   if (embedBox) embedBox.style.display = isAdmin ? 'flex' : 'none';
+  if (cleanupPanel) cleanupPanel.style.display = isAdmin ? 'flex' : 'none';
+  if (!isAdmin){
+    cleanupMatches = [];
+    cleanupSelected.clear();
+    cleanupLastTerm = '';
+    cleanupLoading = false;
+    if (cleanupKeyword) cleanupKeyword.disabled = false;
+    if (cleanupStart) cleanupStart.disabled = false;
+    if (cleanupEnd) cleanupEnd.disabled = false;
+    if (btnCleanupPreview) btnCleanupPreview.disabled = false;
+    if (cleanupResultsEl){
+      cleanupResultsEl.classList.add('empty');
+      cleanupResultsEl.textContent = 'No matches loaded.';
+    }
+    setCleanupStatus('Enter a keyword to search.');
+  }
+  updateCleanupButtons();
 
   if (btnCreatePoll){
     const showPollBtn = !!isAdmin && !replyTarget;
@@ -1664,6 +1972,39 @@ btnPollCancel && btnPollCancel.addEventListener('click', ()=>{
   hidePollBuilder();
   setStatus('');
 });
+
+btnCleanupPreview && !btnCleanupPreview.dataset.bound && (btnCleanupPreview.dataset.bound='1', btnCleanupPreview.addEventListener('click', evt=>{
+  evt.preventDefault();
+  performCleanupSearch();
+}));
+
+btnCleanupDelete && !btnCleanupDelete.dataset.bound && (btnCleanupDelete.dataset.bound='1', btnCleanupDelete.addEventListener('click', async evt=>{
+  evt.preventDefault();
+  if (!cleanupMatches.length){
+    setCleanupStatus('No matches loaded.', true);
+    return;
+  }
+  if (!cleanupSelected.size){
+    setCleanupStatus('Select at least one message.', true);
+    return;
+  }
+  if (!armConfirmButton(btnCleanupDelete, 'Confirm delete?')) return;
+  await deleteSelectedCleanupMatches();
+}));
+
+cleanupSelectAll && !cleanupSelectAll.dataset.bound && (cleanupSelectAll.dataset.bound='1', cleanupSelectAll.addEventListener('change', evt=>{
+  if (cleanupLoading){
+    evt.preventDefault();
+    updateCleanupButtons();
+    return;
+  }
+  const want = !!evt.target.checked;
+  cleanupSelected.clear();
+  if (want){
+    for (const comment of cleanupMatches) cleanupSelected.add(String(comment.id));
+  }
+  renderCleanupResults();
+}));
 
 btnPollSend && btnPollSend.addEventListener('click', async()=>{
   if (!isAdmin) { setStatus('Only admin can send polls', true); return; }
