@@ -481,9 +481,12 @@ const pendingPollVotes = new Set();
 let pollBuilderOpen = false;
 
 /* ===== UI helpers ===== */
-if (limitMbEl) limitMbEl.textContent=MAX_FILE_MB;
-if (limitChars) limitChars.textContent=MAX_CHARS;
-if (limitChars2) limitChars2.textContent=MAX_CHARS;
+if (limitMbEl) limitMbEl.textContent = MAX_FILE_MB;
+function updateLimitLabels(){
+  if (limitChars) limitChars.textContent = isAdmin ? 'Unlimited' : String(MAX_CHARS);
+  if (limitChars2) limitChars2.textContent = isAdmin ? 'Unlimited' : String(MAX_CHARS);
+}
+updateLimitLabels();
 
 const setStatus=(t,isError=false)=>{
   if(!statusEl) return;
@@ -1078,6 +1081,7 @@ function updateAdminUI(){
 
   document.body.classList.toggle('is-admin', !!isAdmin);
   if (adminPanel) adminPanel.style.display = (SHOW_ADMIN_PANEL || isAdmin) ? 'grid' : 'none';
+  updateLimitLabels();
   if (nickEl && nickEl.parentElement) nickEl.parentElement.style.display = isAdmin ? 'none' : 'flex';
 
   if (toggleRepliesEl){ toggleRepliesEl.checked = !!allowReplies; toggleRepliesEl.disabled = !isAdmin; toggleRepliesEl.parentElement.style.display = isAdmin ? 'inline-flex' : 'none'; }
@@ -2045,8 +2049,9 @@ btnSend && btnSend.addEventListener('click', async()=>{
   if (!isAdmin && !allowPosts){ setStatus('Only admin can post right now', true); return; }
 
   const hasMediaTags = /<(img|iframe|video)\b/i.test(content);
-  if (!hasMediaTags && content.length > MAX_CHARS) content = content.slice(0, MAX_CHARS);
-  content = content.replace(/\r\n?/g, '\n').replace(/\n{3,}/g, '\n\n');
+  if (!isAdmin && !hasMediaTags && content.length > MAX_CHARS) content = content.slice(0, MAX_CHARS);
+  content = content.replace(/\r\n?/g, '\n');
+  if (!isAdmin) content = content.replace(/\n{3,}/g, '\n\n');
 
   if (!isAdmin){
     const imgCount = (content.match(/<img\b[^>]*>/gi) || []).length;
