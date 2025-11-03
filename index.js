@@ -235,6 +235,15 @@ const btnCreatePoll=$("btnCreatePoll"), pollBuilder=$("pollBuilder"), pollQuesti
 
 const embedBox=$("embedBox"), embedModeEl=$("embedMode"),
       embedUrlEl=$("embedUrl"), embedHtmlEl=$("embedHtml"), btnEmbedInsert=$("btnEmbedInsert");
+const adminCleanup=$("adminCleanup"), cleanupStatusEl=$("cleanupStatus"), cleanupKeywordEl=$("cleanupKeyword"),
+      cleanupLimitEl=$("cleanupLimit"), cleanupAfterEl=$("cleanupAfter"), cleanupBeforeEl=$("cleanupBefore"),
+      btnCleanupPreview=$("btnCleanupPreview"), btnCleanupDelete=$("btnCleanupDelete"),
+      cleanupResultCountEl=$("cleanupResultCount"), cleanupResultsEl=$("cleanupResults");
+
+let cleanupPreview = [];
+let cleanupPreviewTotal = 0;
+let cleanupPreviewParams = null;
+let cleanupLoading = false;
 
 const limitMbEl=$("limitMb"), limitChars=$("limitChars"), limitChars2=$("limitChars2"), charCount=$("charCount");
 const replyTo=$("replyTo"), replyName=$("replyName"), replyCancel=$("replyCancel");
@@ -759,6 +768,12 @@ function updateAdminUI(){
   }
   if (!isAdmin && pollBuilderOpen) hidePollBuilder();
 
+  if (adminCleanup){
+    adminCleanup.style.display = isAdmin ? 'flex' : 'none';
+    if (!isAdmin) resetCleanupResults();
+  }
+  updateCleanupDeleteState();
+
   if (!allowReplies && !isAdmin) { replyTarget = null; if (replyTo) replyTo.style.display = 'none'; }
 
   updateSendButtonUI();
@@ -851,6 +866,259 @@ function bindAdminTogglesOnce(){
       catch(err){ setStatus(err?.message || 'Failed to update posting setting', true); allowPosts = !allowPosts; e.target.checked = !allowPosts; }
       finally{ e.target.disabled=false; updateAdminUI(); }
     });
+  }
+}
+
+/* ===== Admin keyword cleanup ===== */
+const escapeRegExp = (str = '') => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+function setCleanupStatus(msg, isError = false){
+  if (!cleanupStatusEl) return;
+  if (!msg){
+    cleanupStatusEl.style.display = 'none';
+    cleanupStatusEl.textContent = '';
+    cleanupStatusEl.style.color = '';
+    cleanupStatusEl.style.borderColor = '';
+    cleanupStatusEl.style.background = '';
+    return;
+  }
+  cleanupStatusEl.textContent = msg;
+  cleanupStatusEl.style.display = 'inline-flex';
+  cleanupStatusEl.style.color = isError ? 'var(--danger)' : 'var(--muted)';
+  cleanupStatusEl.style.borderColor = isError ? '#f5b7af' : 'var(--border-2)';
+  cleanupStatusEl.style.background = isError ? '#fdecea' : '#f9fafb';
+}
+
+function updateCleanupDeleteState(){
+  if (!btnCleanupDelete) return;
+  btnCleanupDelete.disabled = !isAdmin || cleanupPreview.length === 0 || cleanupLoading;
+}
+
+function resetCleanupResults(){
+  cleanupPreview = [];
+  cleanupPreviewTotal = 0;
+  cleanupPreviewParams = null;
+  if (cleanupResultCountEl) cleanupResultCountEl.textContent = '0';
+  if (cleanupResultsEl){
+    cleanupResultsEl.innerHTML = '';
+    const placeholder = document.createElement('div');
+    placeholder.className = 'cleanup-item';
+    placeholder.textContent = 'Preview matches to review and delete.';
+    cleanupResultsEl.appendChild(placeholder);
+  }
+  setCleanupStatus('');
+  updateCleanupDeleteState();
+}
+
+function renderCleanupResults(list, keyword){
+  if (!cleanupResultsEl) return;
+  cleanupResultsEl.innerHTML = '';
+  if (!Array.isArray(list) || list.length === 0){
+    const empty = document.createElement('div');
+    empty.className = 'cleanup-item';
+    empty.textContent = 'No matches found for current filters.';
+    cleanupResultsEl.appendChild(empty);
+    return;
+  }
+
+  const rex = keyword ? new RegExp(escapeRegExp(keyword), 'gi') : null;
+
+  list.forEach((c) => {
+    if (!c) return;
+    const item = document.createElement('div');
+    item.className = 'cleanup-item';
+
+    const meta = document.createElement('div');
+    meta.className = 'cleanup-meta';
+    const idSpan = document.createElement('span');
+    idSpan.textContent = `ID: ${c.id}`;
+    meta.appendChild(idSpan);
+
+    const ts = c.created ? new Date(c.created) : null;
+    const timeSpan = document.createElement('span');
+    timeSpan.textContent = `Created: ${ts && !Number.isNaN(ts.getTime()) ? ts.toLocaleString() : 'Unknown'}`;
+    meta.appendChild(timeSpan);
+
+    if (c.nick){
+      const nickSpan = document.createElement('span');
+      nickSpan.textContent = `By: ${c.nick}`;
+      meta.appendChild(nickSpan);
+    }
+
+    const content = document.createElement('div');
+    content.className = 'cleanup-content';
+    const raw = typeof c.content === 'string' ? c.content : '';
+    const normalized = raw.replace(/\s+/g, ' ').trim();
+    const snippet = normalized.length > 240 ? normalized.slice(0, 240) + '…' : normalized;
+
+    if (rex){
+      let lastIndex = 0;
+      let match;
+      while ((match = rex.exec(snippet)) !== null){
+        if (match.index > lastIndex){
+          content.appendChild(document.createTextNode(snippet.slice(lastIndex, match.index)));
+        }
+        const mark = document.createElement('mark');
+        mark.textContent = snippet.slice(match.index, match.index + match[0].length);
+        content.appendChild(mark);
+        lastIndex = match.index + match[0].length;
+      }
+      if (lastIndex < snippet.length){
+        content.appendChild(document.createTextNode(snippet.slice(lastIndex)));
+      }
+      rex.lastIndex = 0;
+    } else {
+      content.textContent = snippet;
+    }
+
+    item.appendChild(meta);
+    item.appendChild(content);
+    cleanupResultsEl.appendChild(item);
+  });
+}
+
+function readCleanupParams(){
+  if (!cleanupKeywordEl) return null;
+  const keyword = (cleanupKeywordEl.value || '').trim();
+  if (!keyword){
+    setCleanupStatus('Enter a word or phrase to search', true);
+    return null;
+  }
+  let limit = Number(cleanupLimitEl && cleanupLimitEl.value ? cleanupLimitEl.value : 50);
+  if (!Number.isFinite(limit)) limit = 50;
+  limit = Math.max(1, Math.min(200, Math.round(limit)));
+  if (cleanupLimitEl) cleanupLimitEl.value = String(limit);
+
+  const afterVal = cleanupAfterEl && cleanupAfterEl.value ? cleanupAfterEl.value : '';
+  const beforeVal = cleanupBeforeEl && cleanupBeforeEl.value ? cleanupBeforeEl.value : '';
+  const afterDate = afterVal ? new Date(afterVal) : null;
+  const beforeDate = beforeVal ? new Date(beforeVal) : null;
+  if (afterDate && beforeDate && afterDate > beforeDate){
+    setCleanupStatus('Start date must be before end date', true);
+    return null;
+  }
+
+  return {
+    keyword,
+    limit,
+    createdAfter: afterDate && !Number.isNaN(afterDate.getTime()) ? afterDate.toISOString() : undefined,
+    createdBefore: beforeDate && !Number.isNaN(beforeDate.getTime()) ? beforeDate.toISOString() : undefined
+  };
+}
+
+async function runCleanupPreview(){
+  if (!cleanupKeywordEl) return;
+  if (cleanupLoading) return;
+  if (!isAdmin){
+    setCleanupStatus('Admin only', true);
+    return;
+  }
+  const params = readCleanupParams();
+  if (!params) return;
+
+  cleanupLoading = true;
+  setCleanupStatus('Loading…');
+
+  if (cleanupResultsEl){
+    cleanupResultsEl.innerHTML = '';
+    const loading = document.createElement('div');
+    loading.className = 'cleanup-item';
+    loading.textContent = 'Loading preview…';
+    cleanupResultsEl.appendChild(loading);
+  }
+  if (cleanupResultCountEl) cleanupResultCountEl.textContent = '0';
+  if (btnCleanupPreview) btnCleanupPreview.disabled = true;
+  if (btnCleanupDelete) btnCleanupDelete.disabled = true;
+
+  try{
+    const res = await api({
+      event: 'COMMENT_SEARCH_FOR_ADMIN',
+      url: PAGE_URL_PATH,
+      keyword: params.keyword,
+      limit: params.limit,
+      createdAfter: params.createdAfter,
+      createdBefore: params.createdBefore
+    });
+    const comments = Array.isArray(res?.data?.comments) ? res.data.comments : [];
+    cleanupPreview = comments;
+    cleanupPreviewTotal = Number(res?.data?.total) || comments.length;
+    cleanupPreviewParams = params;
+    renderCleanupResults(comments, params.keyword);
+
+    if (cleanupResultCountEl){
+      cleanupResultCountEl.textContent = cleanupPreviewTotal > comments.length
+        ? `${comments.length}/${cleanupPreviewTotal}`
+        : String(comments.length);
+    }
+
+    if (!comments.length){
+      setCleanupStatus('No matches found for that keyword', false);
+    } else {
+      const totalNote = cleanupPreviewTotal > comments.length ? ` (showing first ${comments.length})` : '';
+      setCleanupStatus(`Loaded ${comments.length} match${comments.length === 1 ? '' : 'es'}${totalNote}`, false);
+    }
+  }catch(e){
+    cleanupPreview = [];
+    cleanupPreviewTotal = 0;
+    cleanupPreviewParams = null;
+    renderCleanupResults([], '');
+    setCleanupStatus(e?.message || 'Preview failed', true);
+  }finally{
+    cleanupLoading = false;
+    if (btnCleanupPreview) btnCleanupPreview.disabled = false;
+    updateCleanupDeleteState();
+  }
+}
+
+async function runCleanupDelete(){
+  if (!btnCleanupDelete) return;
+  if (cleanupLoading) return;
+  if (!isAdmin){
+    setCleanupStatus('Admin only', true);
+    return;
+  }
+  if (!cleanupPreview.length || !cleanupPreviewParams){
+    setCleanupStatus('Run a preview before deleting', true);
+    return;
+  }
+  if (!armConfirmButton(btnCleanupDelete, 'Confirm delete?')){
+    setCleanupStatus('Click delete again to confirm', false);
+    return;
+  }
+
+  cleanupLoading = true;
+  updateCleanupDeleteState();
+  if (btnCleanupPreview) btnCleanupPreview.disabled = true;
+  setCleanupStatus('Deleting…');
+
+  const ids = Array.from(new Set(cleanupPreview.map(c => c && c.id).filter(Boolean)));
+  if (!ids.length){
+    cleanupLoading = false;
+    if (btnCleanupPreview) btnCleanupPreview.disabled = false;
+    updateCleanupDeleteState();
+    setCleanupStatus('No valid IDs to delete', true);
+    return;
+  }
+
+  try{
+    const res = await api({
+      event: 'COMMENT_BULK_DELETE_FOR_ADMIN',
+      url: PAGE_URL_PATH,
+      ids,
+      keyword: cleanupPreviewParams.keyword,
+      createdAfter: cleanupPreviewParams.createdAfter,
+      createdBefore: cleanupPreviewParams.createdBefore
+    });
+    const deleted = Number(res?.data?.deleted ?? res?.data?.count ?? res?.deleted ?? res?.count ?? ids.length);
+    setCleanupStatus(`Deleted ${deleted} message${deleted === 1 ? '' : 's'}`, false);
+    resetCleanupResults();
+    queueRefresh(120);
+  }catch(e){
+    setCleanupStatus(e?.message || 'Delete failed', true);
+  }finally{
+    cleanupLoading = false;
+    if (btnCleanupPreview) btnCleanupPreview.disabled = false;
+    updateCleanupDeleteState();
   }
 }
 
@@ -1582,6 +1850,20 @@ async function loadLatest(allPages = false){
   } finally {
     loading = false;
   }
+}
+
+/* ===== Admin cleanup listeners ===== */
+if (adminCleanup && !adminCleanup.dataset.cleanupInit){
+  adminCleanup.dataset.cleanupInit = '1';
+  resetCleanupResults();
+}
+if (btnCleanupPreview && !btnCleanupPreview.dataset.bound){
+  btnCleanupPreview.dataset.bound = '1';
+  btnCleanupPreview.addEventListener('click', () => { runCleanupPreview(); });
+}
+if (btnCleanupDelete && !btnCleanupDelete.dataset.bound){
+  btnCleanupDelete.dataset.bound = '1';
+  btnCleanupDelete.addEventListener('click', () => { runCleanupDelete(); });
 }
 
 /* ===== Auth & send ===== */
