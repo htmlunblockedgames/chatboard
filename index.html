@@ -38,20 +38,6 @@
     .tag{font-size:11px;border:1px solid var(--border-2);border-radius:999px;padding:3px 8px;color:var(--muted);background:#f9fafb}
     #conn.ok{ color: var(--ok); border-color:#c7e8d5; background:#eaf7f0; }
     #conn.bad{ color: var(--danger); border-color:#f7c7c5; background:#fdecea; }
-    #adminCleanup{display:none;flex-direction:column;gap:10px;padding:12px;border:1px dashed var(--border-2);border-radius:12px;background:#f8fbff}
-    #adminCleanup .cleanup-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
-    #adminCleanup .cleanup-row.column{flex-direction:column;align-items:flex-start}
-    #cleanupKeyword{flex:1;min-width:240px}
-    #cleanupLimit{width:110px}
-    .cleanup-date{display:inline-flex;align-items:center;gap:6px;font-weight:700;background:#fff}
-    .cleanup-date input{border:none;background:transparent;padding:0;font-weight:600;color:var(--text);min-width:180px}
-    .cleanup-date input:focus{outline:none}
-    .btn.danger{background:#fdecea;border-color:#f5b7af;color:var(--danger)}
-    .btn.danger:hover{background:#fbd6d1}
-    #cleanupResults{display:flex;flex-direction:column;gap:8px;max-height:260px;overflow:auto;width:100%;border:1px solid var(--border-2);border-radius:10px;padding:10px;background:#fff}
-    .cleanup-item{display:flex;flex-direction:column;gap:4px;padding:8px;border:1px solid var(--border-2);border-radius:10px;background:#fdfdff}
-    .cleanup-meta{font-size:11px;color:var(--muted);display:flex;gap:10px;flex-wrap:wrap}
-    .cleanup-content{font-size:13px;color:var(--text);font-weight:600;word-break:break-word}
 
     /* Composer */
     #composer{padding:18px;display:grid;gap:12px}
@@ -358,32 +344,6 @@
           Only admin can post
         </label>
         <button id="btnAdminLogout" class="btn">Logout</button>
-      </div>
-      <div id="adminCleanup">
-        <div class="cleanup-row">
-          <strong>Keyword cleanup</strong>
-          <span id="cleanupStatus" class="tag" style="display:none"></span>
-        </div>
-        <div class="cleanup-row">
-          <input id="cleanupKeyword" type="text" placeholder="Word or phrase (case insensitive)"/>
-          <input id="cleanupLimit" type="number" min="1" max="200" value="50" title="How many matches to preview (max 200)"/>
-        </div>
-        <div class="cleanup-row">
-          <label class="tag cleanup-date">
-            From
-            <input id="cleanupAfter" type="datetime-local"/>
-          </label>
-          <label class="tag cleanup-date">
-            To
-            <input id="cleanupBefore" type="datetime-local"/>
-          </label>
-          <button id="btnCleanupPreview" class="btn">Preview matches</button>
-          <button id="btnCleanupDelete" class="btn danger">Delete matches</button>
-        </div>
-        <div class="cleanup-row column">
-          <span class="limits"><strong id="cleanupResultCount">0</strong> matches in preview</span>
-          <div id="cleanupResults"></div>
-        </div>
       </div>
     </section>
 
