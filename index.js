@@ -392,6 +392,13 @@ if (adminPanel) adminPanel.style.display = SHOW_ADMIN_PANEL ? "grid" : "none";
 
 /* Ensure WS starts once */
 if (!window.__wsStarted) { window.__wsStarted = true; try { connectWS(); } catch {} }
+/* Ensure we kick off an initial refresh even if the WebSocket never connects. */
+if (!window.__initialChatRefresh) {
+  window.__initialChatRefresh = true;
+  runRefresh().catch(() => queueRefresh(120));
+} else {
+  queueRefresh(120);
+}
 /* >>> Added: leave on unload (bind once) */
 if (!window.__presenceBound){
   window.__presenceBound = true;
